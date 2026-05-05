@@ -782,6 +782,7 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
                      onkeydown="if(event.key==='Enter') applyDataFilter()" />
             </div>
             <button class="regex-toggle" id="regex-toggle" onclick="toggleRegex()" title="Toggle regex mode">.*</button>
+            <button class="regex-toggle hidden" id="cross-source-toggle" onclick="toggleCrossSource()" title="Cross-source search is ON: results include correlated records from all sources. Click to restrict to this source only.">🔗 All Sources</button>
             <span class="filter-label">From</span>
             <input class="filter-input" id="data-from" type="datetime-local" />
             <span class="filter-label">To</span>
@@ -1187,6 +1188,7 @@ let fieldPanelCollapsed_ = false;
 let perPage_ = 50;
 let selectedRows_ = new Set();
 let regexMode_ = false;
+let crossSourceMode_ = false;  // when true, search also matches correlated records
 let fieldSearch_ = '';
 const LINKED_SEP = '\x1E';   // separates "SourceLabel\x1Efield_name" for linked fields
 let linkedJobFields_ = [];   // [{label, job_id, fields:[...]}]
@@ -1293,6 +1295,8 @@ async function loadJobs() {
   }
   // Refresh dashboard when home screen visible
   if (!selJobId && !selCollId) loadDashboard();
+  // Keep cross-source button visibility in sync (corr_keys may have changed)
+  _updateCrossSourceBtn();
 }
 
 function renderSidebar(collJobIds) {
@@ -1362,6 +1366,7 @@ async function selectJob(id) {
   const d=document.getElementById('job-detail'); d.style.display='flex';
   const job = jobs.find(j=>j.id===id);
   updateDetailHeader(job);
+  _updateCrossSourceBtn();
 
   // If this job has an active stream, go straight to Live Log and reconnect
   if (activeESes_[id] || (job && job.is_running && activeRunIds_[id])) {
@@ -1407,6 +1412,7 @@ async function selectCollection(cid) {
   document.getElementById('welcome').style.display='none';
   document.getElementById('job-detail').style.display='flex';
   if (coll) updateDetailHeaderForCollection(coll);
+  _updateCrossSourceBtn();
   if (firstJobId) await loadRuns(firstJobId);
 }
 
@@ -1430,6 +1436,7 @@ async function selectCollectionSource(collId, jobId) {
   document.getElementById('job-detail').style.display='flex';
   // Header: show collection name + source name, subtitle shows both source URLs
   if (coll) updateDetailHeaderForCollectionSource(coll, jobId);
+  _updateCrossSourceBtn();
   if (activeESes_[jobId] || (jobs.find(j=>j.id===jobId)||{}).is_running) {
     switchTab('live');
     reconnectLiveLog(jobId);
@@ -2024,6 +2031,7 @@ async function loadData(jobId, page) {
   const params   = new URLSearchParams({page, per_page: perPage_});
   if (search)   params.set('search', search);
   if (regexMode_) params.set('regex', 'true');
+  if (crossSourceMode_ && search) params.set('cross_source', 'true');
   if (fromRaw)  params.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)    params.set('to_date', toRaw.replace('T',' '));
   if (relFilter_) params.set('relevance', relFilter_);
@@ -2035,7 +2043,7 @@ async function loadData(jobId, page) {
   const total=d.total||0;
   const pages=Math.ceil(total/d.per_page)||1;
   document.getElementById('data-total').innerHTML=
-    `<b>${total.toLocaleString()}</b> records`;
+    `<b>${total.toLocaleString()}</b> records${crossSourceMode_ && search ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>' : ''}`;
   document.getElementById('data-page-info').innerHTML=
     `Page <b>${d.page}</b> / <b>${pages}</b>`;
   // Keep header rows chip in sync with the currently viewed job
@@ -2842,6 +2850,43 @@ function toggleRegex() {
   if (btn) btn.classList.toggle('active', regexMode_);
   const inp = document.getElementById('data-search');
   if (inp) inp.placeholder = regexMode_ ? 'Regex pattern (e.g. Error.*timeout)…' : 'Search message / URI / store_id…';
+}
+
+// ── Cross-source search toggle ─────────────────────────────────────────────────
+function toggleCrossSource() {
+  crossSourceMode_ = !crossSourceMode_;
+  const btn = document.getElementById('cross-source-toggle');
+  if (btn) btn.classList.toggle('active', crossSourceMode_);
+  if (crossSourceMode_) showToast('🔗', 'Cross-source ON', 'Search matches correlated records from all sources', 1);
+  else showToast('🔍', 'Single-source mode', 'Search restricted to this source only', 1);
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+/**
+ * Show/hide the cross-source toggle based on whether the current job
+ * belongs to a collection that has correlation keys defined.
+ * When the job is part of a correlated collection, cross-source is AUTO-ENABLED
+ * so search keywords from any source are found immediately without manual toggling.
+ */
+function _updateCrossSourceBtn() {
+  const btn = document.getElementById('cross-source-toggle');
+  if (!btn) return;
+  let hasCorrKeys = false;
+  if (selCollId) {
+    const coll = collections_.find(c => c.id === selCollId);
+    hasCorrKeys = !!(coll && coll.corr_keys && coll.corr_keys.length && coll.sources && coll.sources.length > 1);
+  }
+  btn.classList.toggle('hidden', !hasCorrKeys);
+  if (hasCorrKeys) {
+    // Auto-enable cross-source when entering a correlated collection view
+    crossSourceMode_ = true;
+    btn.classList.add('active');
+  } else {
+    // Disable when leaving collection context
+    crossSourceMode_ = false;
+    btn.classList.remove('active');
+  }
 }
 
 // ── Per-page selector ─────────────────────────────────────────────────────────

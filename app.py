@@ -595,19 +595,46 @@ def job_data(
     sort_by: str = "timestamp",
     sort_dir: str = "desc",
     field_filters: str = "",   # JSON: [{"field":"x","value":"y","op":"eq"|"neq"}]
+    cross_source: bool = False, # also match rows whose correlated records contain the search term
 ):
     import re as _re2
     offset = (page - 1) * per_page
     conditions: list[str] = ["job_id=?"]
     args: tuple = (jid,)
 
+    # cross_source: when a search term is given, also return primary-job rows
+    # whose correlated partner records (from other jobs) match the search.
+    # We build a sub-select that finds primary row IDs via log_correlations.
+    cross_ids_clause = ""   # filled in below when applicable
+    cross_args: tuple = ()
+
     if search:
         if regex:
             conditions.append("CAST(raw_json AS TEXT) REGEXP ?")
             args += (search,)
+            if cross_source:
+                cross_ids_clause = (
+                    "OR le.id IN ("
+                    "  SELECT lc.log_id FROM log_correlations lc"
+                    "  JOIN log_events ce ON ce.id = lc.corr_id"
+                    "  WHERE lc.log_id IN (SELECT id FROM log_events WHERE job_id=?)"
+                    "  AND CAST(ce.raw_json AS TEXT) REGEXP ?"
+                    ")"
+                )
+                cross_args = (jid, search)
         else:
             conditions.append("raw_json LIKE ?")
             args += (f"%{search}%",)
+            if cross_source:
+                cross_ids_clause = (
+                    "OR le.id IN ("
+                    "  SELECT lc.log_id FROM log_correlations lc"
+                    "  JOIN log_events ce ON ce.id = lc.corr_id"
+                    "  WHERE lc.log_id IN (SELECT id FROM log_events WHERE job_id=?)"
+                    "  AND ce.raw_json LIKE ?"
+                    ")"
+                )
+                cross_args = (jid, f"%{search}%")
     if from_date:
         conditions.append("timestamp >= ?")
         args += (from_date,)
@@ -656,14 +683,45 @@ def job_data(
         else:
             order_sql = "timestamp DESC"
 
-    where = " AND ".join(conditions)
-    total = (qone(f"SELECT COUNT(*) c FROM log_events WHERE {where}", args) or {}).get("c", 0)
-    rows  = qall(
-        f"SELECT id, timestamp, run_id, raw_json, scraped_at, "
-        f"relevance, severity, ai_summary, code_refs "
-        f"FROM log_events WHERE {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
-        args + (per_page, offset),
-    )
+    # When cross_source is active and we have a search term, use a UNION-style
+    # query: rows that match directly OR rows whose correlated partners match.
+    # We wrap in a CTE so the WHERE conditions (date, relevance, etc.) still apply.
+    if cross_ids_clause and cross_args:
+        # Base WHERE without the search condition (first two conditions are job_id + search)
+        # We split: job_id condition + other filters (date, relevance, field_filters)
+        non_search_conds = [conditions[0]] + conditions[2:]  # drop the search condition
+        non_search_args  = (args[0],) + args[2:]             # drop the search arg
+
+        # Primary match: direct search on this job
+        direct_search_cond = conditions[1]  # the LIKE or REGEXP condition
+        direct_search_arg  = args[1]        # the search value
+
+        # Combined WHERE for cross query:
+        # job_id=? AND (direct_search OR cross_subquery) AND [other filters]
+        cross_where_parts  = [conditions[0], f"({direct_search_cond} {cross_ids_clause})"] + conditions[2:]
+        cross_where        = " AND ".join(cross_where_parts)
+        # args: job_id, search_val, cross_job_id, cross_search_val, [other_args...]
+        cross_full_args    = (args[0], direct_search_arg) + cross_args + args[2:]
+
+        total = (qone(
+            f"SELECT COUNT(*) c FROM log_events le WHERE {cross_where}",
+            cross_full_args
+        ) or {}).get("c", 0)
+        rows  = qall(
+            f"SELECT le.id, le.timestamp, le.run_id, le.raw_json, le.scraped_at, "
+            f"le.relevance, le.severity, le.ai_summary, le.code_refs "
+            f"FROM log_events le WHERE {cross_where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            cross_full_args + (per_page, offset),
+        )
+    else:
+        where = " AND ".join(conditions)
+        total = (qone(f"SELECT COUNT(*) c FROM log_events WHERE {where}", args) or {}).get("c", 0)
+        rows  = qall(
+            f"SELECT id, timestamp, run_id, raw_json, scraped_at, "
+            f"relevance, severity, ai_summary, code_refs "
+            f"FROM log_events WHERE {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            args + (per_page, offset),
+        )
     return {"rows": rows, "total": total, "page": page, "per_page": per_page}
 
 
