@@ -2086,6 +2086,7 @@ async function loadHistogram(jobId) {
   const p = new URLSearchParams();
   if (search)         p.set('search', search);
   if (regexMode_)     p.set('regex', 'true');
+  if (crossSourceMode_ && search) p.set('cross_source', 'true');
   if (fromRaw)        p.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)          p.set('to_date', toRaw.replace('T',' '));
   if (relFilter_)     p.set('relevance', relFilter_);

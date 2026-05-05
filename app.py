@@ -2190,19 +2190,43 @@ def job_histogram(
     relevance: str = "",
     regex: bool = False,
     field_filters: str = "",
+    cross_source: bool = False,
 ):
     """Return time-bucketed row counts for a bar chart."""
     import re as _re2
     conditions: list[str] = ["job_id=?", "timestamp IS NOT NULL"]
     args: tuple = (jid,)
 
+    cross_ids_clause = ""
+    cross_args: tuple = ()
+
     if search:
         if regex:
             conditions.append("CAST(raw_json AS TEXT) REGEXP ?")
             args += (search,)
+            if cross_source:
+                cross_ids_clause = (
+                    "OR le.id IN ("
+                    "  SELECT lc.log_id FROM log_correlations lc"
+                    "  JOIN log_events ce ON ce.id = lc.corr_id"
+                    "  WHERE lc.log_id IN (SELECT id FROM log_events WHERE job_id=?)"
+                    "  AND CAST(ce.raw_json AS TEXT) REGEXP ?"
+                    ")"
+                )
+                cross_args = (jid, search)
         else:
             conditions.append("raw_json LIKE ?")
             args += (f"%{search}%",)
+            if cross_source:
+                cross_ids_clause = (
+                    "OR le.id IN ("
+                    "  SELECT lc.log_id FROM log_correlations lc"
+                    "  JOIN log_events ce ON ce.id = lc.corr_id"
+                    "  WHERE lc.log_id IN (SELECT id FROM log_events WHERE job_id=?)"
+                    "  AND ce.raw_json LIKE ?"
+                    ")"
+                )
+                cross_args = (jid, f"%{search}%")
     if from_date:
         conditions.append("timestamp >= ?")
         args += (from_date,)
@@ -2235,12 +2259,21 @@ def job_histogram(
         except Exception:
             pass
 
-    where = " AND ".join(conditions)
+    # Build the WHERE clause (with optional cross-source OR branch)
+    if cross_ids_clause and cross_args:
+        direct_search_cond = conditions[2]  # LIKE or REGEXP (after job_id + timestamp)
+        direct_search_arg  = args[1]
+        other_conds = [conditions[0], conditions[1], f"({direct_search_cond} {cross_ids_clause})"] + conditions[3:]
+        where = " AND ".join(other_conds)
+        full_args = (args[0], args[1]) + cross_args + args[2:]
+    else:
+        where = " AND ".join(conditions)
+        full_args = args
 
     # Get time range to pick bucket size
     bounds = qone(
         f"SELECT MIN(timestamp) as mn, MAX(timestamp) as mx, COUNT(*) as total "
-        f"FROM log_events WHERE {where}", args
+        f"FROM log_events le WHERE {where}", full_args
     ) or {}
     total = bounds.get("total", 0)
     mn_ts = bounds.get("mn", "")
@@ -2280,9 +2313,9 @@ def job_histogram(
 
     rows = qall(
         f"SELECT {bucket_sql} as bucket, COUNT(*) as count "
-        f"FROM log_events WHERE {where} "
+        f"FROM log_events le WHERE {where} "
         f"GROUP BY bucket ORDER BY bucket",
-        args,
+        full_args,
     )
     return {
         "buckets": [{"t": r["bucket"], "c": r["count"]} for r in (rows or [])],
