@@ -295,8 +295,8 @@ def job_data(
         regex=regex, cross_source=cross_source,
     )
     # Use table alias "le" when cross_source may have injected "le.id" references
-    tbl = "log_events le" if cross_source and search else "log_events"
-    col = "le." if cross_source and search else ""
+    tbl = "log_events le" if cross_source else "log_events"
+    col = "le." if cross_source else ""
 
     _REAL_COLS = {"timestamp", "severity", "relevance", "id", "scraped_at"}
     dir_sql = "ASC" if sort_dir.lower() == "asc" else "DESC"

@@ -317,7 +317,7 @@ async function loadData(jobId, page) {
   const params  = new URLSearchParams({page, per_page: perPage_});
   if (search)   params.set('search', search);
   if (regexMode_) params.set('regex', 'true');
-  if (crossSourceMode_ && search) params.set('cross_source', 'true');
+  if (crossSourceMode_ && (search || fieldFilters_.length)) params.set('cross_source', 'true');
   if (fromRaw)  params.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)    params.set('to_date',   toRaw.replace('T',' '));
   if (relFilter_) params.set('relevance', relFilter_);
@@ -329,7 +329,7 @@ async function loadData(jobId, page) {
   const total = d.total || 0;
   const pages = Math.ceil(total / d.per_page) || 1;
   document.getElementById('data-total').innerHTML =
-    `<b>${total.toLocaleString()}</b> records${crossSourceMode_ && search ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>' : ''}`;
+    `<b>${total.toLocaleString()}</b> records${crossSourceMode_ && (search || fieldFilters_.length) ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>' : ''}`;
   document.getElementById('data-page-info').innerHTML = `Page <b>${d.page}</b> / <b>${pages}</b>`;
   _updateRowsChip(total, (jobs.find(j=>j.id===jobId)||{}).name || null);
   renderDataTable(d.rows);
@@ -367,7 +367,7 @@ async function loadHistogram(jobId) {
   const p = new URLSearchParams();
   if (search)                     p.set('search', search);
   if (regexMode_)                 p.set('regex', 'true');
-  if (crossSourceMode_ && search) p.set('cross_source', 'true');
+  if (crossSourceMode_ && (search || fieldFilters_.length)) p.set('cross_source', 'true');
   if (fromRaw)                    p.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)                      p.set('to_date',   toRaw.replace('T',' '));
   if (relFilter_)                 p.set('relevance', relFilter_);

@@ -77,15 +77,37 @@ def _build_log_filter(
                 op    = ff.get("op", "eq")
                 if not field or not re.match(r'^[A-Za-z0-9_.@\-]+$', field):
                     continue
+                # Strip Elasticsearch sub-field suffixes (.raw, .keyword) —
+                # these aren't present in the stored _source JSON.
+                field = re.sub(r'\.(raw|keyword)$', '', field)
                 p0      = f"$.{field}[0]"
                 p       = f"$.{field}"
-                coalesce = "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
+                coalesce    = "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
+                ce_coalesce = "CAST(COALESCE(json_extract(ce.raw_json,?),json_extract(ce.raw_json,?)) AS TEXT)"
                 if op == "neq":
-                    conditions.append(f"({coalesce} != ? OR json_extract(raw_json,?) IS NULL)")
-                    args += (p0, p, value, p)
+                    direct_cond = f"({coalesce} != ? OR json_extract(raw_json,?) IS NULL)"
+                    direct_args = (p0, p, value, p)
+                    cross_cond  = f"({ce_coalesce} != ? OR json_extract(ce.raw_json,?) IS NULL)"
+                    cross_cond_args = (p0, p, value, p)
                 else:
-                    conditions.append(f"{coalesce} = ?")
-                    args += (p0, p, value)
+                    direct_cond = f"{coalesce} = ?"
+                    direct_args = (p0, p, value)
+                    cross_cond  = f"{ce_coalesce} = ?"
+                    cross_cond_args = (p0, p, value)
+                if cross_source:
+                    cross_sub = (
+                        "le.id IN ("
+                        "  SELECT lc.log_id FROM log_correlations lc"
+                        "  JOIN log_events ce ON ce.id = lc.corr_id"
+                        "  WHERE lc.log_id IN (SELECT id FROM log_events WHERE job_id=?)"
+                        f"  AND {cross_cond}"
+                        ")"
+                    )
+                    conditions.append(f"({direct_cond} OR {cross_sub})")
+                    args += direct_args + (job_id,) + cross_cond_args
+                else:
+                    conditions.append(direct_cond)
+                    args += direct_args
         except Exception:
             pass
 
