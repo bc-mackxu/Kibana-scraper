@@ -8,6 +8,7 @@ let activeESes_   = {};   // {jobId: EventSource}
 let sortField_ = 'timestamp', sortDir_ = 'desc';
 let dataFields_ = [], dataSelectedFields_ = null, lastDataRows_ = null;
 let relFilter_ = '';
+let anthropicReady_ = false;   // set after first /api/settings fetch
 let fieldPanelCollapsed_ = false;
 let perPage_ = 50;
 let selectedRows_ = new Set();
@@ -28,6 +29,8 @@ const PRIORITY_FIELDS = [
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Fetch settings early so anthropicReady_ is known before any button click
+  api.get('/api/settings').then(s => { anthropicReady_ = !!s.anthropic_key_set; });
   await Promise.all([loadStats(), loadJobs()]);
   loadDashboard();
   checkHealth();
@@ -1038,6 +1041,54 @@ async function fetchCodeRefs(rowId) {
   }
 }
 
+// ── MCP prompt modal (shown when no Anthropic key is configured) ──────────────
+function showMcpPromptModal(mode) {
+  if (!selJobId) return;
+  const jobName = (jobs.find(j => j.id === selJobId) || {}).name || `Job ${selJobId}`;
+
+  let prompt;
+  if (mode === 'analyze') {
+    prompt =
+`I need you to analyze logs from the kibana-scraper MCP server for job "${jobName}" (id: ${selJobId}).
+
+Steps:
+1. Call fetch_logs_for_analysis(job_id=${selJobId}, limit=50)
+2. For each log entry, determine:
+   - relevant: true if related to checkout / cart / payment / order processing
+   - severity: "critical" | "high" | "medium" | "low" | "info"
+   - summary: one concise sentence describing what happened
+   - github_terms: 1-2 class/method names or error codes to search in source code
+3. Call save_analysis_results() with ALL your classifications in one call
+4. Repeat steps 1-3 until fetch_logs_for_analysis returns status "no_more_logs"`;
+  } else {
+    prompt =
+`Please run auto-classification on the kibana-scraper MCP server for job "${jobName}" (id: ${selJobId}).
+
+Steps:
+1. Call get_stats(job_id=${selJobId}) to see the current breakdown
+2. Call fetch_logs_for_analysis(job_id=${selJobId}, limit=100) to get unanalyzed logs
+3. Classify each log (relevant, severity, summary, github_terms) based on already-analyzed patterns for this job
+4. Call save_analysis_results() with all results
+5. Repeat until no more unanalyzed logs remain
+6. Call get_analysis_summary(job_id=${selJobId}) and show me the results`;
+  }
+
+  document.getElementById('mcp-modal-title').textContent =
+    mode === 'analyze' ? '🤖 Analyze via Claude Desktop MCP' : '⚡ Auto-Classify via Claude Desktop MCP';
+  document.getElementById('mcp-prompt-text').value = prompt;
+  document.getElementById('mcp-modal').classList.add('open');
+}
+
+function copyMcpPrompt() {
+  const ta = document.getElementById('mcp-prompt-text');
+  ta.select();
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const btn = document.getElementById('mcp-copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy prompt'; }, 2000);
+  });
+}
+
 // ── AI Analysis with toast ────────────────────────────────────────────────────
 let toastTimer_=null;
 function showToast(icon, title, body, pct) {
@@ -1055,6 +1106,7 @@ function hideToast(delay=3000) {
 
 function startAnalysis() {
   if (!selJobId) return;
+  if (!anthropicReady_) { showMcpPromptModal('analyze'); return; }
   const btn=document.getElementById('btn-analyze');
   btn.disabled=true; btn.textContent='⟳ Analyzing…';
   const pbar=document.getElementById('analyze-pbar');
@@ -1195,6 +1247,7 @@ function _renderBgPanel() {
 // ── Auto-Classify ─────────────────────────────────────────────────────────────
 function startAutoClassify() {
   if (!selJobId) return;
+  if (!anthropicReady_) { showMcpPromptModal('classify'); return; }
   const btn  = document.getElementById('btn-autoclassify');
   const pbar = document.getElementById('autoclassify-pbar');
   const fill = document.getElementById('autoclassify-bar-fill');
@@ -1259,6 +1312,8 @@ async function saveApiKeys() {
   document.getElementById('anthropic-key-input').value = '';
   document.getElementById('gh-token-input').value = '';
   document.getElementById('btn-settings').style.borderColor = '';
+  // Refresh anthropicReady_ so buttons respond immediately after key entry
+  api.get('/api/settings').then(s => { anthropicReady_ = !!s.anthropic_key_set; });
   showToast('✓', 'Saved', 'Settings saved', 100);
   hideToast(2500);
 }

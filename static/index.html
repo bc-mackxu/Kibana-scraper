@@ -543,6 +543,35 @@
   </div>
 </div>
 
+<!-- MCP Prompt modal — shown when Anthropic key is not set -->
+<div class="modal-overlay" id="mcp-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal-box" style="max-width:680px;">
+    <div class="modal-header">
+      <span id="mcp-modal-title">Analyze via Claude Desktop MCP</span>
+      <button class="modal-close" onclick="document.getElementById('mcp-modal').classList.remove('open')">✕</button>
+    </div>
+    <div style="padding:16px 20px 6px;">
+      <p style="margin:0 0 10px;color:var(--tx1);font-size:13px;">
+        No Anthropic API key is configured. Paste the prompt below into
+        <strong>Claude Desktop</strong> — it will use the kibana-scraper MCP tools to
+        classify logs directly.
+      </p>
+      <textarea id="mcp-prompt-text" readonly
+        style="width:100%;height:260px;resize:vertical;font-family:monospace;font-size:12px;
+               background:var(--bg2);color:var(--tx0);border:1px solid var(--border);
+               border-radius:6px;padding:10px;box-sizing:border-box;line-height:1.5;"></textarea>
+    </div>
+    <div class="form-actions" style="padding-top:4px;">
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mcp-modal').classList.remove('open')">Cancel</button>
+      <button class="btn btn-purple" id="mcp-copy-btn" onclick="copyMcpPrompt()">📋 Copy prompt</button>
+      <button class="btn btn-sm" style="background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.35);"
+              onclick="document.getElementById('mcp-modal').classList.remove('open');openSettings()">
+        ⚙ Add API key instead
+      </button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 </body>
 </html>
