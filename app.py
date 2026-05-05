@@ -1101,19 +1101,24 @@ def run_collection(cid: int):
                 "VALUES (?, ?, ?, ?, ?)",
                 (jid, src_status, now_src, rows_ref[0], src_run_log))
 
-        # Auto-build correlations if group exists
+        # Auto-build correlations if group has keys defined
         g = qone("SELECT id FROM log_groups WHERE collection_id=?", (cid,))
-        if g and not any_failed:
-            _run_logs[run_id].append(f"\n[→] Auto-building correlations for group {g['id']}…")
-            try:
-                job_ids = [s["job_id"] for s in srcs if s.get("job_id")]
-                keys = [r["field_name"] for r in
-                        qall("SELECT field_name FROM collection_corr_keys WHERE collection_id=?", (cid,))]
-                if len(job_ids) >= 2 and keys:
-                    _run_logs[run_id].append(f"  Keys: {', '.join(keys)}")
-                    _run_logs[run_id].append("  [✓] Correlations queued — use 'Build Correlations' in Groups for full rebuild")
-            except Exception as e:
-                _run_logs[run_id].append(f"  [!] Correlation hint failed: {e}")
+        if g:
+            gid = g['id']
+            keys = qall("SELECT * FROM log_group_keys WHERE group_id=?", (gid,)) or []
+            if keys:
+                _run_logs[run_id].append(f"\n{'━'*50}")
+                _run_logs[run_id].append(f"[🔗] Auto-building correlations (group '{g.get('id')}', {len(keys)} key(s))…")
+                try:
+                    linked = _build_correlations_sync(
+                        gid,
+                        log_fn=lambda msg: _run_logs[run_id].append(msg)
+                    )
+                    _run_logs[run_id].append(f"[✓] Correlations done — {linked:,} pairs linked")
+                except Exception as e:
+                    _run_logs[run_id].append(f"[!] Correlation build failed: {e}")
+            else:
+                _run_logs[run_id].append("\n[→] No correlation keys defined — skipping auto-link")
 
         status = "failed" if any_failed else "success"
         _run_status[run_id] = status
@@ -1206,115 +1211,99 @@ def _ensure_correlations_schema():
     exe("CREATE INDEX IF NOT EXISTS idx_corr_corr_id ON log_correlations (corr_id)")
 
 
-@app.get("/api/groups/{gid}/build-correlations/stream")
-async def build_correlations_stream(gid: int):
+def _build_correlations_sync(gid: int, log_fn=None):
     """
-    SSE: pre-compute ALL correlations for this group and store in log_correlations.
-    Uses AND logic — all keys for a job-pair must match.
+    Synchronously build correlations for group `gid`.
+    log_fn(msg) is called with progress strings (optional).
+    Returns total pairs linked.
     """
-    async def gen():
-        _ensure_groups_schema()
-        _ensure_correlations_schema()
-        yield f"data: {json.dumps({'type':'start'})}\n\n"
+    import sqlite3 as _sq3
+    from collections import defaultdict as _dd
 
-        members = qall(
-            "SELECT lgm.job_id, lgm.label, sj.name AS job_name "
-            "FROM log_group_members lgm JOIN scrape_jobs sj ON sj.id=lgm.job_id "
-            "WHERE lgm.group_id=?", (gid,)
-        ) or []
+    def _log(msg):
+        if log_fn:
+            log_fn(msg)
 
-        if len(members) < 2:
-            yield f"data: {json.dumps({'type':'done','linked':0,'message':'Need at least 2 jobs'})}\n\n"
-            return
+    _ensure_groups_schema()
+    _ensure_correlations_schema()
 
-        keys = qall("SELECT * FROM log_group_keys WHERE group_id=?", (gid,)) or []
-        if not keys:
-            yield f"data: {json.dumps({'type':'done','linked':0,'message':'No correlation keys defined'})}\n\n"
-            return
+    members = qall(
+        "SELECT lgm.job_id, lgm.label, sj.name AS job_name "
+        "FROM log_group_members lgm JOIN scrape_jobs sj ON sj.id=lgm.job_id "
+        "WHERE lgm.group_id=?", (gid,)
+    ) or []
+    if len(members) < 2:
+        _log("  [!] Need at least 2 jobs in group — skipping")
+        return 0
 
-        from collections import defaultdict
-        pair_map: dict = defaultdict(list)
-        for k in keys:
-            ja, jb = k['job_id_a'], k['job_id_b']
-            if ja > jb: ja, jb = jb, ja; k = {**k, 'job_id_a': ja, 'job_id_b': jb, 'field_a': k['field_b'], 'field_b': k['field_a']}
-            pair_map[(ja, jb)].append(k)
+    keys = qall("SELECT * FROM log_group_keys WHERE group_id=?", (gid,)) or []
+    if not keys:
+        _log("  [!] No correlation keys defined — skipping")
+        return 0
 
-        member_label = {m['job_id']: (m.get('label') or m.get('job_name') or f"Job {m['job_id']}") for m in members}
+    pair_map: dict = _dd(list)
+    for k in keys:
+        ja, jb = k['job_id_a'], k['job_id_b']
+        if ja > jb:
+            ja, jb = jb, ja
+            k = {**k, 'job_id_a': ja, 'job_id_b': jb, 'field_a': k['field_b'], 'field_b': k['field_a']}
+        pair_map[(ja, jb)].append(k)
 
-        total_linked = 0
+    member_label = {m['job_id']: (m.get('label') or m.get('job_name') or f"Job {m['job_id']}") for m in members}
+    total_linked = 0
 
-        import sqlite3 as _sq3
-        from db import DB_PATH as _DB_PATH
+    for (jid_a, jid_b), pair_keys in pair_map.items():
+        label_a = member_label.get(jid_a, f"Job {jid_a}")
+        label_b = member_label.get(jid_b, f"Job {jid_b}")
 
-        for (jid_a, jid_b), pair_keys in pair_map.items():
-            label_a = member_label.get(jid_a, f"Job {jid_a}")
-            label_b = member_label.get(jid_b, f"Job {jid_b}")
+        cnt_a = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_a,)) or {}).get("c", 0)
+        cnt_b = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_b,)) or {}).get("c", 0)
+        _log(f"  [→] Correlating {label_a} ({cnt_a:,}) ↔ {label_b} ({cnt_b:,}) on {len(pair_keys)} key(s)…")
 
-            cnt_a = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_a,)) or {}).get("c", 0)
-            cnt_b = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_b,)) or {}).get("c", 0)
-            yield f"data: {json.dumps({'type':'progress','message':f'Loading {label_a} ({cnt_a:,} rows)...'})}\n\n"
-            await asyncio.sleep(0.01)
-
-            # ── Efficient approach: extract only the matching field values via SQL ──
-            # Never load full raw_json; only pull id + extracted field values.
-            def _extract_field_vals(job_id, fields):
-                """Return {composite_key: [row_ids]} index for a job.
-                composite_key = tuple of field values (one per field in `fields`).
-                """
-                # Build SELECT projections: CAST(COALESCE(array-form, scalar-form) AS TEXT)
-                projections = []
-                proj_args = []
-                for f in fields:
-                    p0, p = f"$.{f}[0]", f"$.{f}"
-                    projections.append(
-                        "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
-                    )
-                    proj_args += [p0, p]
-                select_sql = (
-                    f"SELECT id, {', '.join(projections)} "
-                    f"FROM log_events WHERE job_id=?"
+        def _extract(job_id, fields):
+            projections = []
+            proj_args = []
+            for f in fields:
+                projections.append(
+                    "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
                 )
-                _c = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
-                _c.execute("PRAGMA journal_mode=WAL")
-                try:
-                    cur = _c.execute(select_sql, proj_args + [job_id])
-                    index: dict = defaultdict(list)
-                    while True:
-                        chunk = cur.fetchmany(2000)
-                        if not chunk:
-                            break
-                        for row in chunk:
-                            row_id = row[0]
-                            vals = tuple(str(v or "").strip() for v in row[1:])
-                            if any(vals):  # skip rows where all fields are empty
-                                index[vals].append(row_id)
-                finally:
-                    _c.close()
-                return index
+                proj_args += [f"$.{f}[0]", f"$.{f}"]
+            sql = f"SELECT id, {', '.join(projections)} FROM log_events WHERE job_id=?"
+            _c = _sq3.connect(str(DB_PATH), check_same_thread=False, timeout=60)
+            _c.execute("PRAGMA journal_mode=WAL")
+            try:
+                cur = _c.execute(sql, proj_args + [job_id])
+                index: dict = _dd(list)
+                while True:
+                    chunk = cur.fetchmany(2000)
+                    if not chunk:
+                        break
+                    for row in chunk:
+                        vals = tuple(str(v or "").strip() for v in row[1:])
+                        if any(vals):
+                            index[vals].append(row[0])
+            finally:
+                _c.close()
+            return index
 
-            fields_a = [k['field_a'] for k in pair_keys]
-            fields_b = [k['field_b'] for k in pair_keys]
+        fields_a = [k['field_a'] for k in pair_keys]
+        fields_b = [k['field_b'] for k in pair_keys]
 
-            yield f"data: {json.dumps({'type':'progress','message':f'Indexing {label_a}...'})}\n\n"
-            await asyncio.sleep(0.01)
-            idx_a = _extract_field_vals(jid_a, fields_a)
+        idx_a = _extract(jid_a, fields_a)
+        idx_b = _extract(jid_b, fields_b)
+        _log(f"  [→] Matching {len(idx_a):,} × {len(idx_b):,} unique keys…")
 
-            yield f"data: {json.dumps({'type':'progress','message':f'Indexing {label_b}...'})}\n\n"
-            await asyncio.sleep(0.01)
-            idx_b = _extract_field_vals(jid_b, fields_b)
+        exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
+            "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_a))
+        exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
+            "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_b))
 
-            yield f"data: {json.dumps({'type':'progress','message':f'Matching {len(idx_a):,} × {len(idx_b):,} unique keys...'})}\n\n"
-            await asyncio.sleep(0.01)
+        linked = 0
+        insert_batch: list = []
 
-            # Clear old correlations for this pair
-            exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
-                "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_a))
-            exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
-                "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_b))
-
-            linked = 0
-            insert_batch: list = []
-
+        _c2 = _sq3.connect(str(DB_PATH), check_same_thread=False, timeout=60)
+        _c2.execute("PRAGMA journal_mode=WAL")
+        try:
             for key_vals, ids_a in idx_a.items():
                 if not any(key_vals):
                     continue
@@ -1323,47 +1312,66 @@ async def build_correlations_stream(gid: int):
                     continue
                 matched_json = json.dumps([
                     f"{k['field_a']}={str(v)[:60]}"
-                    for k, v in zip(pair_keys, key_vals)
-                    if v
+                    for k, v in zip(pair_keys, key_vals) if v
                 ])
                 for id_a in ids_a:
                     for id_b in ids_b:
                         insert_batch.append((id_a, id_b, gid, label_b, matched_json))
                         insert_batch.append((id_b, id_a, gid, label_a, matched_json))
                         linked += 1
-
                 if len(insert_batch) >= 2000:
-                    _c2 = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
-                    _c2.execute("PRAGMA journal_mode=WAL")
-                    try:
-                        _c2.executemany(
-                            "INSERT OR IGNORE INTO log_correlations "
-                            "(log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
-                            insert_batch
-                        )
-                        _c2.commit()
-                    finally:
-                        _c2.close()
-                    insert_batch = []
-                    yield f"data: {json.dumps({'type':'progress','message':f'{linked:,} pairs linked so far...'})}\n\n"
-                    await asyncio.sleep(0.01)
-
-            # Flush remaining
-            if insert_batch:
-                _c2 = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
-                _c2.execute("PRAGMA journal_mode=WAL")
-                try:
                     _c2.executemany(
                         "INSERT OR IGNORE INTO log_correlations "
                         "(log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
                         insert_batch
                     )
                     _c2.commit()
-                finally:
-                    _c2.close()
+                    insert_batch = []
+                    _log(f"  [→] {linked:,} pairs so far…")
+            if insert_batch:
+                _c2.executemany(
+                    "INSERT OR IGNORE INTO log_correlations "
+                    "(log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
+                    insert_batch
+                )
+                _c2.commit()
+        finally:
+            _c2.close()
 
-            total_linked += linked
-            yield f"data: {json.dumps({'type':'pair_done','label_a':label_a,'label_b':label_b,'linked':linked})}\n\n"
+        _log(f"  [✓] {label_a} ↔ {label_b}: {linked:,} pairs linked")
+        total_linked += linked
+
+    return total_linked
+
+
+@app.get("/api/groups/{gid}/build-correlations/stream")
+async def build_correlations_stream(gid: int):
+    """SSE wrapper around _build_correlations_sync for the Groups UI button."""
+    messages: list = []
+
+    async def gen():
+        yield f"data: {json.dumps({'type':'start'})}\n\n"
+        loop = asyncio.get_event_loop()
+
+        progress_buf: list = []
+
+        def _on_log(msg):
+            progress_buf.append(msg)
+
+        # Run the sync function in a thread so we don't block the event loop
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = loop.run_in_executor(pool, lambda: _build_correlations_sync(gid, _on_log))
+            while not fut.done():
+                while progress_buf:
+                    msg = progress_buf.pop(0)
+                    yield f"data: {json.dumps({'type':'progress','message':msg.strip()})}\n\n"
+                await asyncio.sleep(0.2)
+            # Drain any remaining messages
+            while progress_buf:
+                msg = progress_buf.pop(0)
+                yield f"data: {json.dumps({'type':'progress','message':msg.strip()})}\n\n"
+            total_linked = await fut
 
         yield f"data: {json.dumps({'type':'done','linked':total_linked})}\n\n"
 
