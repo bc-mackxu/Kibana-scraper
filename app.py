@@ -1243,94 +1243,124 @@ async def build_correlations_stream(gid: int):
 
         total_linked = 0
 
+        import sqlite3 as _sq3
+        from db import DB_PATH as _DB_PATH
+
         for (jid_a, jid_b), pair_keys in pair_map.items():
             label_a = member_label.get(jid_a, f"Job {jid_a}")
             label_b = member_label.get(jid_b, f"Job {jid_b}")
 
-            # Count rows so the user sees progress context
             cnt_a = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_a,)) or {}).get("c", 0)
             cnt_b = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_b,)) or {}).get("c", 0)
-            yield f"data: {json.dumps({'type':'progress','message':f'Joining {label_a} ({cnt_a:,}) ↔ {label_b} ({cnt_b:,}) on {len(pair_keys)} key(s)...'})}\n\n"
+            yield f"data: {json.dumps({'type':'progress','message':f'Loading {label_a} ({cnt_a:,} rows)...'})}\n\n"
             await asyncio.sleep(0.01)
 
-            # Clear old correlations for this job pair in this group
+            # ── Efficient approach: extract only the matching field values via SQL ──
+            # Never load full raw_json; only pull id + extracted field values.
+            def _extract_field_vals(job_id, fields):
+                """Return {composite_key: [row_ids]} index for a job.
+                composite_key = tuple of field values (one per field in `fields`).
+                """
+                # Build SELECT projections: CAST(COALESCE(array-form, scalar-form) AS TEXT)
+                projections = []
+                proj_args = []
+                for f in fields:
+                    p0, p = f"$.{f}[0]", f"$.{f}"
+                    projections.append(
+                        "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
+                    )
+                    proj_args += [p0, p]
+                select_sql = (
+                    f"SELECT id, {', '.join(projections)} "
+                    f"FROM log_events WHERE job_id=?"
+                )
+                _c = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
+                _c.execute("PRAGMA journal_mode=WAL")
+                try:
+                    cur = _c.execute(select_sql, proj_args + [job_id])
+                    index: dict = defaultdict(list)
+                    while True:
+                        chunk = cur.fetchmany(2000)
+                        if not chunk:
+                            break
+                        for row in chunk:
+                            row_id = row[0]
+                            vals = tuple(str(v or "").strip() for v in row[1:])
+                            if any(vals):  # skip rows where all fields are empty
+                                index[vals].append(row_id)
+                finally:
+                    _c.close()
+                return index
+
+            fields_a = [k['field_a'] for k in pair_keys]
+            fields_b = [k['field_b'] for k in pair_keys]
+
+            yield f"data: {json.dumps({'type':'progress','message':f'Indexing {label_a}...'})}\n\n"
+            await asyncio.sleep(0.01)
+            idx_a = _extract_field_vals(jid_a, fields_a)
+
+            yield f"data: {json.dumps({'type':'progress','message':f'Indexing {label_b}...'})}\n\n"
+            await asyncio.sleep(0.01)
+            idx_b = _extract_field_vals(jid_b, fields_b)
+
+            yield f"data: {json.dumps({'type':'progress','message':f'Matching {len(idx_a):,} × {len(idx_b):,} unique keys...'})}\n\n"
+            await asyncio.sleep(0.01)
+
+            # Clear old correlations for this pair
             exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
                 "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_a))
             exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
                 "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_b))
 
-            # Build the SQL JOIN on all keys at once.
-            # Each key: COALESCE(array-form, scalar-form) for both sides.
-            # This avoids loading all rows into Python memory.
-            join_clauses = []
-            path_args: list = []
-            for k in pair_keys:
-                fa, fb = k['field_a'], k['field_b']
-                pa0, pa = f"$.{fa}[0]", f"$.{fa}"
-                pb0, pb = f"$.{fb}[0]", f"$.{fb}"
-                join_clauses.append(
-                    "CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT)"
-                    " = "
-                    "CAST(COALESCE(json_extract(b.raw_json,?),json_extract(b.raw_json,?)) AS TEXT)"
-                    " AND CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT) != ''"
-                )
-                path_args += [pa0, pa, pb0, pb, pa0, pa]
-
-            join_on = " AND ".join(join_clauses)
-            sql = (
-                f"SELECT a.id AS id_a, b.id AS id_b, "
-                + ", ".join(
-                    f"CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT) AS matched_{i}"
-                    for i, _ in enumerate(pair_keys)
-                )
-                + f" FROM log_events a JOIN log_events b"
-                + f" ON a.job_id=? AND b.job_id=? AND {join_on}"
-            )
-            # args: matched-value paths × N keys, then job ids, then join paths
-            val_paths: list = []
-            for k in pair_keys:
-                fa = k['field_a']
-                val_paths += [f"$.{fa}[0]", f"$.{fa}"]
-            full_args = tuple(val_paths) + (jid_a, jid_b) + tuple(path_args)
-
             linked = 0
-            batch_a: list = []
-            batch_b: list = []
-            label_b_str = label_b
-            label_a_str = label_a
+            insert_batch: list = []
 
-            import sqlite3 as _sq3
-            from db import DB_PATH as _DB_PATH
-            _conn = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
-            _conn.row_factory = lambda c, r: dict(zip([x[0] for x in c.description], r))
-            _conn.execute("PRAGMA journal_mode=WAL")
-            try:
-                cursor = _conn.execute(sql, full_args)
-                while True:
-                    chunk = cursor.fetchmany(500)
-                    if not chunk:
-                        break
-                    rows_to_insert = []
-                    for row in chunk:
-                        matched_vals = [row.get(f"matched_{i}", "") for i in range(len(pair_keys))]
-                        matched_json = json.dumps([
-                            f"{k['field_a']}={str(v)[:60]}"
-                            for k, v in zip(pair_keys, matched_vals)
-                            if v
-                        ])
-                        rows_to_insert.append((row['id_a'], row['id_b'], gid, label_b_str, matched_json))
-                        rows_to_insert.append((row['id_b'], row['id_a'], gid, label_a_str, matched_json))
+            for key_vals, ids_a in idx_a.items():
+                if not any(key_vals):
+                    continue
+                ids_b = idx_b.get(key_vals, [])
+                if not ids_b:
+                    continue
+                matched_json = json.dumps([
+                    f"{k['field_a']}={str(v)[:60]}"
+                    for k, v in zip(pair_keys, key_vals)
+                    if v
+                ])
+                for id_a in ids_a:
+                    for id_b in ids_b:
+                        insert_batch.append((id_a, id_b, gid, label_b, matched_json))
+                        insert_batch.append((id_b, id_a, gid, label_a, matched_json))
                         linked += 1
-                    _conn.executemany(
-                        "INSERT OR IGNORE INTO log_correlations (log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
-                        rows_to_insert
+
+                if len(insert_batch) >= 2000:
+                    _c2 = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
+                    _c2.execute("PRAGMA journal_mode=WAL")
+                    try:
+                        _c2.executemany(
+                            "INSERT OR IGNORE INTO log_correlations "
+                            "(log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
+                            insert_batch
+                        )
+                        _c2.commit()
+                    finally:
+                        _c2.close()
+                    insert_batch = []
+                    yield f"data: {json.dumps({'type':'progress','message':f'{linked:,} pairs linked so far...'})}\n\n"
+                    await asyncio.sleep(0.01)
+
+            # Flush remaining
+            if insert_batch:
+                _c2 = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
+                _c2.execute("PRAGMA journal_mode=WAL")
+                try:
+                    _c2.executemany(
+                        "INSERT OR IGNORE INTO log_correlations "
+                        "(log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
+                        insert_batch
                     )
-                    _conn.commit()
-                    if linked % 500 == 0 and linked > 0:
-                        yield f"data: {json.dumps({'type':'progress','message':f'{linked:,} pairs linked so far...'})}\n\n"
-                        await asyncio.sleep(0.01)
-            finally:
-                _conn.close()
+                    _c2.commit()
+                finally:
+                    _c2.close()
 
             total_linked += linked
             yield f"data: {json.dumps({'type':'pair_done','label_a':label_a,'label_b':label_b,'linked':linked})}\n\n"
