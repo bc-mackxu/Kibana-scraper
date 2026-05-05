@@ -43,6 +43,11 @@ python app.py
 
 The UI opens automatically at **http://localhost:8765**.
 
+> **Alternative** — use uvicorn directly (e.g. for `--reload` during development):
+> ```bash
+> python3 -m uvicorn app:app --reload --port 8765
+> ```
+
 ---
 
 ## Usage
@@ -130,16 +135,37 @@ Restart Claude Desktop. Claude can then call these tools:
 
 ```
 kibana-scraper/
-├── app.py              # FastAPI web app + scheduler
-├── db.py               # Shared SQLite helpers (qone/qall/exe/init_db)
-├── kibana_scraper.py   # Playwright scraper CLI
-├── analyzer.py         # Claude Haiku + GitHub code search
-├── mcp_server.py       # MCP server for Claude Desktop
+├── app.py                  # FastAPI entry point — mounts routers, runs scheduler
+├── db.py                   # Shared SQLite helpers (qone/qall/exe/init_db)
+├── kibana_scraper.py       # Playwright scraper CLI + session login
+├── analyzer.py             # Claude Haiku AI classification + GitHub code search
+├── mcp_server.py           # MCP server for Claude Desktop
+├── schema.sql              # SQLite schema (applied on first run)
+├── routers/
+│   ├── jobs.py             # /api/jobs/* — CRUD, data, histogram, export
+│   ├── collections.py      # /api/collections/* — grouped multi-source jobs
+│   ├── groups.py           # /api/groups/* — correlation groups + keys
+│   ├── logs.py             # /api/logs/* — correlated batch fetch
+│   ├── analysis.py         # /api/jobs/*/analyze, auto-classify, clusters
+│   ├── settings.py         # /api/settings, /api/stats
+│   ├── _run_engine.py      # Scrape runner, SSE live log, scheduler
+│   └── _filters.py         # Shared SQL WHERE-clause builder (search, field filters, cross-source)
 ├── static/
-│   └── index.html      # Single-page web UI
+│   ├── index.html          # Single-page app shell
+│   ├── base.css            # Variables, reset, buttons, sidebar, modals, forms
+│   ├── data-view.css       # Toolbar, table, histogram, field panel, chips
+│   ├── dashboard-misc.css  # Dashboard cards, tabs, runs, terminal, config
+│   ├── core.js             # Global state, API client, helpers (esc, fmtDate, …)
+│   ├── data-table.js       # Data tab — table render, filters, histogram, export, clusters
+│   ├── sidebar.js          # Sidebar job/collection list + search
+│   ├── job-detail.js       # Detail header, tabs, runs tab, config tab
+│   ├── analysis.js         # Analyze, auto-classify, similar-log modal
+│   ├── modals.js           # Add/edit job modal, groups UI, config forms
+│   ├── dashboard.js        # Dashboard stats, recent runs, quick presets
+│   └── keyboard.js         # Keyboard shortcuts, modal backdrop, boot (calls init())
 ├── requirements.txt
 ├── .gitignore
-└── keys.json           # API keys (not committed)
+└── keys.json               # API keys (not committed)
 ```
 
 The SQLite database (`kibana_data.db`) is created automatically on first run.
