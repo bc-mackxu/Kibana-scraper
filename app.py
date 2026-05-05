@@ -261,6 +261,14 @@ def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/static/{filename}")
+def static_file(filename: str):
+    p = STATIC_DIR / filename
+    if not p.exists():
+        raise HTTPException(404, "Not found")
+    return FileResponse(str(p))
+
+
 @app.get("/api/stats")
 def stats():
     return {
@@ -549,8 +557,8 @@ def job_data(
                 json_path0 = f"$.{field}[0]"
                 json_path  = f"$.{field}"
                 # Values may be stored as scalars OR as single-element arrays [v].
-                # Use COALESCE($.field[0], $.field) to handle both forms.
-                coalesce = "COALESCE(json_extract(raw_json, ?), json_extract(raw_json, ?))"
+                # CAST to TEXT so numeric JSON values (e.g. 500) match string filters ("500").
+                coalesce = "CAST(COALESCE(json_extract(raw_json, ?), json_extract(raw_json, ?)) AS TEXT)"
                 if op == "neq":
                     conditions.append(
                         f"({coalesce} != ? OR json_extract(raw_json, ?) IS NULL)"
@@ -1238,81 +1246,91 @@ async def build_correlations_stream(gid: int):
         for (jid_a, jid_b), pair_keys in pair_map.items():
             label_a = member_label.get(jid_a, f"Job {jid_a}")
             label_b = member_label.get(jid_b, f"Job {jid_b}")
-            yield f"data: {json.dumps({'type':'progress','message':f'Loading {label_a} records...'})}\n\n"
+
+            # Count rows so the user sees progress context
+            cnt_a = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_a,)) or {}).get("c", 0)
+            cnt_b = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid_b,)) or {}).get("c", 0)
+            yield f"data: {json.dumps({'type':'progress','message':f'Joining {label_a} ({cnt_a:,}) ↔ {label_b} ({cnt_b:,}) on {len(pair_keys)} key(s)...'})}\n\n"
             await asyncio.sleep(0.01)
 
-            def _field_val(d, key):
-                v = d.get(key, "")
-                if isinstance(v, list): v = v[0] if v else ""
-                return str(v or "").strip()
+            # Clear old correlations for this job pair in this group
+            exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
+                "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_a))
+            exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
+                "(SELECT id FROM log_events WHERE job_id=?)", (gid, jid_b))
 
-            def _load_index(job_id, fields):
-                rows = qall("SELECT id, raw_json FROM log_events WHERE job_id=?", (job_id,)) or []
-                id_to_rj = {}
-                field_index = {f: defaultdict(list) for f in fields}
-                for r in rows:
-                    rj = r['raw_json']
-                    if isinstance(rj, str):
-                        try: rj = json.loads(rj)
-                        except: rj = {}
-                    id_to_rj[r['id']] = rj
-                    for f in fields:
-                        v = _field_val(rj, f)
-                        if v:
-                            field_index[f][v].append(r['id'])
-                return id_to_rj, field_index
+            # Build the SQL JOIN on all keys at once.
+            # Each key: COALESCE(array-form, scalar-form) for both sides.
+            # This avoids loading all rows into Python memory.
+            join_clauses = []
+            path_args: list = []
+            for k in pair_keys:
+                fa, fb = k['field_a'], k['field_b']
+                pa0, pa = f"$.{fa}[0]", f"$.{fa}"
+                pb0, pb = f"$.{fb}[0]", f"$.{fb}"
+                join_clauses.append(
+                    "CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT)"
+                    " = "
+                    "CAST(COALESCE(json_extract(b.raw_json,?),json_extract(b.raw_json,?)) AS TEXT)"
+                    " AND CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT) != ''"
+                )
+                path_args += [pa0, pa, pb0, pb, pa0, pa]
 
-            fields_a = [k['field_a'] for k in pair_keys]
-            fields_b = [k['field_b'] for k in pair_keys]
-
-            yield f"data: {json.dumps({'type':'progress','message':f'Indexing {label_a} & {label_b}...'})}\n\n"
-            await asyncio.sleep(0.01)
-
-            rj_a, idx_a = _load_index(jid_a, fields_a)
-            rj_b, idx_b = _load_index(jid_b, fields_b)
-
-            yield f"data: {json.dumps({'type':'progress','message':f'Finding matches ({len(rj_a)} × {len(rj_b)} records)...'})}\n\n"
-            await asyncio.sleep(0.01)
-
-            anchor_k = pair_keys[0]
-            f_anchor_a, f_anchor_b = anchor_k['field_a'], anchor_k['field_b']
+            join_on = " AND ".join(join_clauses)
+            sql = (
+                f"SELECT a.id AS id_a, b.id AS id_b, "
+                + ", ".join(
+                    f"CAST(COALESCE(json_extract(a.raw_json,?),json_extract(a.raw_json,?)) AS TEXT) AS matched_{i}"
+                    for i, _ in enumerate(pair_keys)
+                )
+                + f" FROM log_events a JOIN log_events b"
+                + f" ON a.job_id=? AND b.job_id=? AND {join_on}"
+            )
+            # args: matched-value paths × N keys, then job ids, then join paths
+            val_paths: list = []
+            for k in pair_keys:
+                fa = k['field_a']
+                val_paths += [f"$.{fa}[0]", f"$.{fa}"]
+            full_args = tuple(val_paths) + (jid_a, jid_b) + tuple(path_args)
 
             linked = 0
-            exe("DELETE FROM log_correlations WHERE group_id=? AND log_id IN "
-                "(SELECT id FROM log_events WHERE job_id=?)",
-                (gid, jid_a))
+            batch_a: list = []
+            batch_b: list = []
+            label_b_str = label_b
+            label_a_str = label_a
 
-            for id_a, rj in rj_a.items():
-                anchor_val = _field_val(rj, f_anchor_a)
-                if not anchor_val:
-                    continue
-                candidates = idx_b[f_anchor_b].get(anchor_val, [])
-                for id_b in candidates:
-                    rj2 = rj_b[id_b]
-                    matched = []
-                    ok = True
-                    for k in pair_keys:
-                        va = _field_val(rj, k['field_a'])
-                        vb = _field_val(rj2, k['field_b'])
-                        if not va or va != vb:
-                            ok = False
-                            break
-                        matched.append(f"{k['field_a']}={va[:60]}")
-                    if not ok:
-                        continue
-                    matched_json = json.dumps(matched)
-                    try:
-                        exe("INSERT OR IGNORE INTO log_correlations (log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
-                            (id_a, id_b, gid, label_b, matched_json))
-                        exe("INSERT OR IGNORE INTO log_correlations (log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
-                            (id_b, id_a, gid, label_a, matched_json))
+            import sqlite3 as _sq3
+            from db import DB_PATH as _DB_PATH
+            _conn = _sq3.connect(str(_DB_PATH), check_same_thread=False, timeout=60)
+            _conn.row_factory = lambda c, r: dict(zip([x[0] for x in c.description], r))
+            _conn.execute("PRAGMA journal_mode=WAL")
+            try:
+                cursor = _conn.execute(sql, full_args)
+                while True:
+                    chunk = cursor.fetchmany(500)
+                    if not chunk:
+                        break
+                    rows_to_insert = []
+                    for row in chunk:
+                        matched_vals = [row.get(f"matched_{i}", "") for i in range(len(pair_keys))]
+                        matched_json = json.dumps([
+                            f"{k['field_a']}={str(v)[:60]}"
+                            for k, v in zip(pair_keys, matched_vals)
+                            if v
+                        ])
+                        rows_to_insert.append((row['id_a'], row['id_b'], gid, label_b_str, matched_json))
+                        rows_to_insert.append((row['id_b'], row['id_a'], gid, label_a_str, matched_json))
                         linked += 1
-                    except Exception:
-                        pass
-
-                if linked % 200 == 0 and linked > 0:
-                    yield f"data: {json.dumps({'type':'progress','message':f'{linked} pairs linked so far...'})}\n\n"
-                    await asyncio.sleep(0.01)
+                    _conn.executemany(
+                        "INSERT OR IGNORE INTO log_correlations (log_id,corr_id,group_id,source_label,matched_keys) VALUES (?,?,?,?,?)",
+                        rows_to_insert
+                    )
+                    _conn.commit()
+                    if linked % 500 == 0 and linked > 0:
+                        yield f"data: {json.dumps({'type':'progress','message':f'{linked:,} pairs linked so far...'})}\n\n"
+                        await asyncio.sleep(0.01)
+            finally:
+                _conn.close()
 
             total_linked += linked
             yield f"data: {json.dumps({'type':'pair_done','label_a':label_a,'label_b':label_b,'linked':linked})}\n\n"
@@ -1683,6 +1701,121 @@ async def summarize_logs(jid: int, payload: dict):
         summary = f"Summary unavailable: {e}"
 
     return {"summary": summary, "count": len(rows)}
+
+
+# ─── Histogram ────────────────────────────────────────────────────────────────
+
+@app.get("/api/jobs/{jid}/histogram")
+def job_histogram(
+    jid: int,
+    search: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    relevance: str = "",
+    regex: bool = False,
+    field_filters: str = "",
+):
+    """Return time-bucketed row counts for a bar chart."""
+    import re as _re2
+    conditions: list[str] = ["job_id=?", "timestamp IS NOT NULL"]
+    args: tuple = (jid,)
+
+    if search:
+        if regex:
+            conditions.append("CAST(raw_json AS TEXT) REGEXP ?")
+            args += (search,)
+        else:
+            conditions.append("raw_json LIKE ?")
+            args += (f"%{search}%",)
+    if from_date:
+        conditions.append("timestamp >= ?")
+        args += (from_date,)
+    if to_date:
+        conditions.append("timestamp <= ?")
+        args += (to_date,)
+    if relevance:
+        conditions.append("relevance=?")
+        args += (relevance,)
+    if field_filters:
+        try:
+            ff_list = json.loads(field_filters)
+            for ff in ff_list:
+                field = ff.get("field", "")
+                value = ff.get("value", "")
+                op    = ff.get("op", "eq")
+                if not field or not _re2.match(r'^[A-Za-z0-9_.@\-]+$', field):
+                    continue
+                json_path0 = f"$.{field}[0]"
+                json_path  = f"$.{field}"
+                coalesce = "CAST(COALESCE(json_extract(raw_json, ?), json_extract(raw_json, ?)) AS TEXT)"
+                if op == "neq":
+                    conditions.append(
+                        f"({coalesce} != ? OR json_extract(raw_json, ?) IS NULL)"
+                    )
+                    args += (json_path0, json_path, value, json_path)
+                else:
+                    conditions.append(f"{coalesce} = ?")
+                    args += (json_path0, json_path, value)
+        except Exception:
+            pass
+
+    where = " AND ".join(conditions)
+
+    # Get time range to pick bucket size
+    bounds = qone(
+        f"SELECT MIN(timestamp) as mn, MAX(timestamp) as mx, COUNT(*) as total "
+        f"FROM log_events WHERE {where}", args
+    ) or {}
+    total = bounds.get("total", 0)
+    mn_ts = bounds.get("mn", "")
+    mx_ts = bounds.get("mx", "")
+
+    if not total or not mn_ts or not mx_ts:
+        return {"buckets": [], "total": 0, "bucket_label": "", "from": "", "to": ""}
+
+    from datetime import datetime as _dt
+    try:
+        mn_dt = _dt.fromisoformat(str(mn_ts))
+        mx_dt = _dt.fromisoformat(str(mx_ts))
+    except Exception:
+        return {"buckets": [], "total": total, "bucket_label": "", "from": mn_ts, "to": mx_ts}
+
+    span_hours = max((mx_dt - mn_dt).total_seconds() / 3600, 0.01)
+
+    # Target ~50 bars
+    if span_hours <= 2:          # ≤2h → 5min buckets
+        bucket_label = "5 min"
+        bucket_sql = "strftime('%Y-%m-%dT%H:', timestamp) || printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / 5) * 5) || ':00'"
+    elif span_hours <= 12:       # ≤12h → 30min buckets
+        bucket_label = "30 min"
+        bucket_sql = "strftime('%Y-%m-%dT%H:', timestamp) || CASE WHEN CAST(strftime('%M', timestamp) AS INTEGER) < 30 THEN '00:00' ELSE '30:00' END"
+    elif span_hours <= 48:       # ≤2d → 1h buckets
+        bucket_label = "1 hour"
+        bucket_sql = "strftime('%Y-%m-%dT%H:00:00', timestamp)"
+    elif span_hours <= 240:      # ≤10d → 6h buckets
+        bucket_label = "6 hours"
+        bucket_sql = "strftime('%Y-%m-%dT', timestamp) || printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / 6) * 6) || ':00:00'"
+    elif span_hours <= 1680:     # ≤10w → 1d buckets
+        bucket_label = "1 day"
+        bucket_sql = "strftime('%Y-%m-%d', timestamp)"
+    else:                        # >10w → 1 week buckets
+        bucket_label = "1 week"
+        bucket_sql = "strftime('%Y-W%W', timestamp)"
+
+    rows = qall(
+        f"SELECT {bucket_sql} as bucket, COUNT(*) as count "
+        f"FROM log_events WHERE {where} "
+        f"GROUP BY bucket ORDER BY bucket",
+        args,
+    )
+    return {
+        "buckets": [{"t": r["bucket"], "c": r["count"]} for r in (rows or [])],
+        "total": total,
+        "bucket_label": bucket_label,
+        "from": mn_ts,
+        "to": mx_ts,
+    }
+
 
 # ─── Startup ──────────────────────────────────────────────────────────────────
 

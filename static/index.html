@@ -569,7 +569,22 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 .field-item.linked.selected label { color:var(--blue); }
 .linked-val { color:var(--blue); font-style:italic; }
 .linked-col-hdr { color:var(--blue); font-size:10px; }
+
+/* ── Histogram ── */
+#histogram-wrap {
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg1);
+}
+#histogram-wrap.hidden { display: none; }
+.histogram-meta {
+  display: flex; gap: 12px; align-items: center;
+  font-size: 11px; color: var(--tx2); margin-bottom: 4px;
+}
+.histogram-meta span { white-space: nowrap; }
+#histogram-canvas { height: 90px !important; cursor: crosshair; }
 </style>
+<script src="/static/chart.min.js"></script>
 </head>
 <body>
 
@@ -734,6 +749,16 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 
         <!-- Exclude filter chips -->
         <div id="exclude-chips"></div>
+
+        <!-- Histogram chart -->
+        <div id="histogram-wrap" class="hidden">
+          <div class="histogram-meta">
+            <span id="histogram-hits"></span>
+            <span id="histogram-range"></span>
+            <span id="histogram-bucket"></span>
+          </div>
+          <canvas id="histogram-canvas"></canvas>
+        </div>
 
         <!-- Body: field panel + table -->
         <div class="data-body">
@@ -1745,6 +1770,7 @@ async function loadData(jobId, page) {
   params.set('sort_by', sortField_);
   params.set('sort_dir', sortDir_);
   if (fieldFilters_.length) params.set('field_filters', JSON.stringify(fieldFilters_));
+  if (page === 1) loadHistogram(jobId);
   const d=await api.get(`/api/jobs/${jobId}/data?${params}`);
   const total=d.total||0;
   const pages=Math.ceil(total/d.per_page)||1;
@@ -1777,6 +1803,83 @@ function clearDataFilter() {
   dataPage_=1; loadData(selJobId, 1);
 }
 function dataPage(delta) { dataPage_=Math.max(1, dataPage_+delta); clearSelection(); loadData(selJobId, dataPage_); }
+
+// ── Histogram ─────────────────────────────────────────────────────────────────
+let _histChart = null;
+
+async function loadHistogram(jobId) {
+  const wrap   = document.getElementById('histogram-wrap');
+  const canvas = document.getElementById('histogram-canvas');
+  if (!wrap || !canvas) return;
+
+  const search  = document.getElementById('data-search')?.value.trim()||'';
+  const fromRaw = document.getElementById('data-from')?.value||'';
+  const toRaw   = document.getElementById('data-to')?.value||'';
+  const p = new URLSearchParams();
+  if (search)         p.set('search', search);
+  if (regexMode_)     p.set('regex', 'true');
+  if (fromRaw)        p.set('from_date', fromRaw.replace('T',' '));
+  if (toRaw)          p.set('to_date', toRaw.replace('T',' '));
+  if (relFilter_)     p.set('relevance', relFilter_);
+  if (fieldFilters_.length) p.set('field_filters', JSON.stringify(fieldFilters_));
+
+  let hd;
+  try { hd = await api.get(`/api/jobs/${jobId}/histogram?${p}`); }
+  catch(e) { wrap.classList.add('hidden'); return; }
+
+  if (!hd || !hd.buckets || !hd.buckets.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+
+  // Meta labels
+  const fmt = ts => ts ? ts.replace('T',' ').slice(0,16) : '';
+  document.getElementById('histogram-hits').textContent   = `${(hd.total||0).toLocaleString()} hits`;
+  document.getElementById('histogram-range').textContent  = `${fmt(hd.from)} – ${fmt(hd.to)}`;
+  document.getElementById('histogram-bucket').textContent = `Bucket: ${hd.bucket_label}`;
+
+  const labels = hd.buckets.map(b => b.t);
+  const data   = hd.buckets.map(b => b.c);
+
+  if (_histChart) { _histChart.destroy(); _histChart = null; }
+  _histChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: 'rgba(63,185,80,0.55)',
+        hoverBackgroundColor: 'rgba(63,185,80,0.85)',
+        borderWidth: 0,
+        barPercentage: 0.9,
+        categoryPercentage: 1.0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: {display:false}, tooltip: {
+        callbacks: { title: items => items[0].label.replace('T',' '), label: i => `${i.raw.toLocaleString()} logs` }
+      }},
+      scales: {
+        x: { ticks: { color:'#6e7681', maxTicksLimit:8, maxRotation:0,
+                       callback: (v, i) => labels[i]?.replace('T',' ').slice(0,13) },
+             grid: {display:false}, border:{display:false} },
+        y: { ticks: { color:'#6e7681', maxTicksLimit:4 },
+             grid: { color:'rgba(48,54,61,0.6)' }, border:{display:false} }
+      },
+      onClick(evt, elems) {
+        if (!elems.length) return;
+        const idx   = elems[0].index;
+        const tFrom = labels[idx];
+        const tTo   = idx+1 < labels.length ? labels[idx+1] : hd.to;
+        const fEl = document.getElementById('data-from');
+        const tEl = document.getElementById('data-to');
+        if (fEl) fEl.value = tFrom.slice(0,16).replace(' ','T');
+        if (tEl) tEl.value = tTo.slice(0,16).replace(' ','T');
+        applyDataFilter();
+      }
+    }
+  });
+}
 
 // ── Relevance filter ──────────────────────────────────────────────────────────
 function setRelFilter(val) {
