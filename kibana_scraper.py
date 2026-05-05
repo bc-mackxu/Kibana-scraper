@@ -414,7 +414,7 @@ def refresh_page(page):
 
 def cmd_login(url: str):
     import signal
-    TIMEOUT = 30  # seconds
+    TIMEOUT = 120  # seconds
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, slow_mo=50)
