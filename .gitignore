@@ -1,0 +1,22 @@
+# Sensitive / personal files
+session.json
+keys.json
+
+# Database (contains scraped log data)
+kibana_data.db
+kibana_data.db-wal
+kibana_data.db-shm
+
+# Scraper output
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# macOS
+.DS_Store

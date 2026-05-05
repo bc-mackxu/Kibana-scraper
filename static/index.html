@@ -1,0 +1,3048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kibana Scraper</title>
+<style>
+:root {
+  --bg0: #0d1117; --bg1: #161b22; --bg2: #21262d; --bg3: #30363d;
+  --tx0: #e6edf3; --tx1: #8b949e; --tx2: #6e7681;
+  --green: #3fb950; --blue: #58a6ff; --orange: #ffa657;
+  --red: #f85149; --purple: #bc8cff; --yellow: #e3b341;
+  --border: #30363d; --border-subtle: #21262d;
+  --radius: 6px; --radius-lg: 10px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg0); color: var(--tx0);
+  height: 100vh; display: flex; flex-direction: column;
+  font-size: 13px; line-height: 1.5;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--tx2); }
+
+/* ── Header ── */
+header {
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  padding: 0 16px; height: 52px;
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.logo { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--tx0); }
+.logo-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #1f6feb, #388bfd); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.logo em { color: var(--blue); font-style: normal; }
+.header-sep { width: 1px; height: 20px; background: var(--border); }
+.stat-chip {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 3px 10px;
+  font-size: 11px; color: var(--tx1);
+}
+.stat-chip b { color: var(--tx0); font-weight: 600; }
+header .spacer { flex: 1; }
+
+/* ── Buttons ── */
+.btn {
+  cursor: pointer; border: none; border-radius: var(--radius);
+  padding: 6px 13px; font-size: 12px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all .15s; white-space: nowrap; line-height: 1;
+}
+.btn:hover { opacity: .85; }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.btn-green  { background: var(--green); color: #000; }
+.btn-blue   { background: var(--blue);  color: #000; }
+.btn-red    { background: var(--red);   color: #fff; }
+.btn-purple { background: var(--purple); color: #000; }
+.btn-ghost  { background: var(--bg2); color: var(--tx0); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--bg3); opacity: 1; }
+.btn-sm { padding: 4px 9px; font-size: 11px; }
+.btn-icon { padding: 5px 8px; font-size: 14px; }
+
+/* ── Layout ── */
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ── */
+aside {
+  width: 240px; background: var(--bg1); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+.sidebar-hdr {
+  padding: 10px 14px 8px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sidebar-hdr-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--tx2); }
+#job-list { flex: 1; overflow-y: auto; padding: 6px; }
+.job-item {
+  padding: 9px 10px; border-radius: var(--radius); cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 2px; transition: background .12s; border: 1px solid transparent;
+}
+.job-item:hover { background: var(--bg2); }
+.job-item.active { background: var(--bg2); border-color: var(--border); }
+.job-name { font-size: 12px; font-weight: 600; color: var(--tx0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-meta { display: flex; align-items: center; gap: 6px; }
+.job-meta-text { font-size: 11px; color: var(--tx2); }
+.job-count { font-size: 11px; color: var(--tx1); margin-left: auto; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot-success { background: var(--green); box-shadow: 0 0 0 2px rgba(63,185,80,.2); }
+.dot-failed  { background: var(--red); box-shadow: 0 0 0 2px rgba(248,81,73,.2); }
+.dot-running { background: var(--orange); animation: pulse 1.2s ease-in-out infinite; }
+.dot-none    { background: var(--bg3); }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(.9)} }
+@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+/* ── Background Jobs indicator ── */
+.bgjobs-btn { position:relative; cursor:pointer; border:none; border-radius:var(--radius); padding:5px 10px; font-size:12px; font-weight:500; display:inline-flex; align-items:center; gap:6px; background:var(--bg2); color:var(--tx1); border:1px solid var(--border); transition:all .15s; }
+.bgjobs-btn:hover { background:var(--bg3); color:var(--tx0); }
+.bgjobs-btn .bj-spinner { font-size:13px; animation:spin .8s linear infinite; }
+.bgjobs-btn .bj-count { background:var(--orange); color:#000; border-radius:9px; padding:0 5px; font-size:10px; font-weight:700; line-height:16px; min-width:16px; text-align:center; }
+.bgjobs-btn.has-running { border-color:var(--orange); color:var(--orange); }
+.bgjobs-btn.has-error { border-color:var(--red); color:var(--red); }
+
+.bgjobs-panel { position:absolute; top:52px; right:12px; z-index:200; width:360px; background:var(--bg1); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:0 8px 32px rgba(0,0,0,.5); overflow:hidden; }
+.bgjobs-panel-hdr { padding:10px 14px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--tx2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.bgjobs-panel-hdr button { background:none; border:none; color:var(--tx2); cursor:pointer; font-size:12px; }
+.bgjobs-panel-hdr button:hover { color:var(--red); }
+.bgjobs-list { max-height:400px; overflow-y:auto; }
+.bgjob-item { padding:10px 14px; border-bottom:1px solid var(--border-subtle); }
+.bgjob-item:last-child { border-bottom:none; }
+.bgjob-row1 { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.bgjob-icon { font-size:14px; flex-shrink:0; }
+.bgjob-name { font-size:12px; font-weight:500; color:var(--tx0); flex:1; }
+.bgjob-status { font-size:10px; padding:1px 7px; border-radius:9px; font-weight:600; }
+.bgjob-status.running { background:rgba(255,166,87,.15); color:var(--orange); }
+.bgjob-status.done    { background:rgba(63,185,80,.15);  color:var(--green); }
+.bgjob-status.error   { background:rgba(248,81,73,.1);   color:var(--red); }
+.bgjob-msg { font-size:11px; color:var(--tx2); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bgjob-bar { height:3px; background:var(--bg3); border-radius:2px; overflow:hidden; }
+.bgjob-bar-fill { height:100%; border-radius:2px; transition:width .3s; background:var(--orange); }
+.bgjob-bar-fill.done  { background:var(--green); }
+.bgjob-bar-fill.error { background:var(--red); }
+.bgjobs-empty { padding:20px; text-align:center; color:var(--tx2); font-size:12px; }
+
+/* ── Main ── */
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Welcome ── */
+.welcome {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+}
+.welcome-icon { font-size: 48px; opacity: .3; }
+.welcome h2 { font-size: 18px; font-weight: 600; }
+.welcome p  { font-size: 13px; color: var(--tx1); }
+
+/* ── Detail header ── */
+.detail-header {
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  padding: 10px 16px; display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+}
+.detail-info { flex: 1; min-width: 0; }
+.detail-name { font-size: 14px; font-weight: 700; color: var(--tx0); }
+.detail-url  { font-size: 11px; color: var(--tx2); font-family: 'SF Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px; margin-top: 1px; }
+.detail-sched { font-size: 11px; color: var(--tx1); background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; padding: 2px 9px; white-space: nowrap; }
+
+/* ── Tabs ── */
+.tabs {
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  display: flex; padding: 0 16px; flex-shrink: 0;
+}
+.tab {
+  padding: 10px 14px; font-size: 12px; font-weight: 500; cursor: pointer;
+  color: var(--tx2); border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+.tab:hover { color: var(--tx0); }
+.tab.active { color: var(--tx0); border-bottom-color: var(--blue); }
+
+/* ── Tab panes ── */
+.tab-pane { flex: 1; overflow-y: auto; padding: 16px; display: none; gap: 12px; }
+.tab-pane.active { display: flex; flex-direction: column; }
+#pane-data { padding: 0 !important; gap: 0 !important; overflow: hidden !important; }
+
+/* ── Cards ── */
+.card { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.card-header { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; color: var(--tx1); }
+.card-header b { color: var(--tx0); }
+
+/* ── Runs ── */
+.run-row { display: grid; grid-template-columns: 80px 1fr auto auto auto; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; cursor: pointer; transition: background .1s; }
+.run-row:last-child { border-bottom: none; }
+.run-row:hover { background: var(--bg2); }
+.badge { padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.badge-success { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+.badge-failed  { background: rgba(248,81,73,.15);  color: var(--red);   border: 1px solid rgba(248,81,73,.25); }
+.badge-running { background: rgba(255,166,87,.15); color: var(--orange); border: 1px solid rgba(255,166,87,.25); }
+
+/* ── Terminal ── */
+.terminal {
+  background: #010409; border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 12px; line-height: 1.7; padding: 12px 14px;
+  overflow-y: auto; flex: 1; min-height: 200px;
+}
+.log-line { white-space: pre-wrap; word-break: break-all; padding: 0; }
+.log-line.ok        { color: var(--green); }
+.log-line.err       { color: var(--red); }
+.log-line.warn      { color: var(--orange); }
+.log-line.info      { color: var(--blue); }
+.log-line.chunk-hdr { color: var(--blue); font-weight: 700; margin-top: 6px;
+                      border-top: 1px solid rgba(88,166,255,.3); padding-top: 4px; }
+.log-done { text-align: center; padding: 8px 14px; font-size: 12px; border-radius: var(--radius); margin-top: 8px; font-weight: 500; }
+.log-done.success { background: rgba(63,185,80,.1); color: var(--green); border: 1px solid rgba(63,185,80,.2); }
+.log-done.failed  { background: rgba(248,81,73,.1);  color: var(--red);   border: 1px solid rgba(248,81,73,.2); }
+
+/* ── Data tab layout ── */
+.data-toolbar {
+  flex-shrink: 0; background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+.data-toolbar-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+}
+.data-toolbar-row + .data-toolbar-row { border-top: 1px solid var(--border-subtle); }
+.data-search-wrap { flex: 1; position: relative; min-width: 0; }
+.data-search-wrap .search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--tx2); font-size: 13px; pointer-events: none; }
+.data-search-wrap input { width: 100%; }
+input.search-input { padding-left: 28px !important; }
+.filter-input {
+  background: var(--bg0); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 10px;
+  color: var(--tx0); font-size: 12px; outline: none;
+  transition: border-color .15s;
+}
+.filter-input:focus { border-color: var(--blue); }
+.filter-input[type=datetime-local] { color-scheme: dark; min-width: 168px; }
+.filter-label { font-size: 11px; color: var(--tx2); white-space: nowrap; }
+.toolbar-sep { height: 20px; width: 1px; background: var(--border); margin: 0 2px; }
+.data-total-badge { font-size: 11px; color: var(--tx2); white-space: nowrap; }
+.data-total-badge b { color: var(--tx0); }
+
+/* ── Relevance pills ── */
+.rel-pills { display: flex; gap: 4px; }
+.rel-pill {
+  padding: 4px 11px; border-radius: 20px; font-size: 11px; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--border); color: var(--tx1);
+  background: transparent; transition: all .15s; display: flex; align-items: center; gap: 4px;
+}
+.rel-pill:hover { border-color: var(--tx1); color: var(--tx0); }
+.rel-pill .pill-count { font-size: 10px; opacity: .75; }
+.rel-pill.active        { background: var(--bg3); color: var(--tx0); border-color: var(--tx1); }
+.rel-pill.active-green  { background: rgba(63,185,80,.15); color: var(--green); border-color: rgba(63,185,80,.4); }
+.rel-pill.active-red    { background: rgba(248,81,73,.12); color: var(--red); border-color: rgba(248,81,73,.4); }
+.rel-pill.active-orange { background: rgba(255,166,87,.1); color: var(--orange); border-color: rgba(255,166,87,.4); }
+
+/* ── Analyze button + progress ── */
+.analyze-wrap { position: relative; }
+.analyze-progress-bar {
+  position: absolute; bottom: -2px; left: 0; right: 0; height: 2px;
+  background: var(--bg3); border-radius: 1px; overflow: hidden;
+  display: none;
+}
+.analyze-progress-bar.active { display: block; }
+.analyze-bar-fill { height: 100%; background: var(--purple); transition: width .4s ease; }
+.analyze-status-text { font-size: 11px; color: var(--purple); white-space: nowrap; }
+
+/* ── Data body ── */
+.data-body { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Field panel ── */
+.field-panel {
+  width: 180px; flex-shrink: 0; border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--bg0);
+  transition: width .2s;
+}
+.field-panel.collapsed { width: 32px; }
+.field-panel-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 10px; border-bottom: 1px solid var(--border);
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--tx2);
+  flex-shrink: 0; gap: 4px;
+}
+.field-panel-hdr .collapse-btn { cursor: pointer; font-size: 14px; color: var(--tx2); line-height: 1; opacity: .7; }
+.field-panel-hdr .collapse-btn:hover { opacity: 1; color: var(--tx0); }
+.field-panel.collapsed .field-panel-hdr { justify-content: center; }
+.field-panel.collapsed .field-panel-label { display: none; }
+#field-list { overflow-y: auto; flex: 1; padding: 4px 0; }
+.field-panel.collapsed #field-list { display: none; }
+.field-panel.collapsed .field-search-wrap { display: none; }
+.field-item { display: flex; align-items: center; gap: 6px; padding: 4px 10px; cursor: pointer; min-width: 0; border-radius: 4px; margin: 0 3px; }
+.field-item:hover { background: var(--bg2); }
+.field-item input[type=checkbox] { cursor: pointer; accent-color: var(--blue); flex-shrink: 0; width: 13px; height: 13px; }
+.field-item label { font-size: 11px; color: var(--tx2); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.field-item.selected label { color: var(--tx0); font-weight: 500; }
+
+/* ── Table area ── */
+.data-table-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.data-table-wrap { flex: 1; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th {
+  background: var(--bg0); padding: 7px 11px; text-align: left;
+  font-weight: 600; font-size: 11px; color: var(--tx2);
+  border-bottom: 2px solid var(--border);
+  position: sticky; top: 0; z-index: 1; white-space: nowrap;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+td {
+  padding: 6px 11px; border-bottom: 1px solid var(--border-subtle);
+  color: var(--tx0); max-width: 320px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+tr:hover td { background: var(--bg2); cursor: pointer; }
+tr.relevant-row td:first-child { border-left: 3px solid var(--green); padding-left: 8px; }
+tr.irrelevant-row { opacity: .45; }
+tr.irrelevant-row:hover { opacity: .65; }
+tr.expanded-row > td { background: var(--bg2); white-space: normal; overflow: visible; max-width: none; word-break: break-word; }
+.expand-detail { padding: 10px 11px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--tx1); display: none; }
+.expand-detail.open { display: table-row; }
+.expand-detail td { background: var(--bg0); border-left: 3px solid var(--bg3); white-space: pre-wrap; word-break: break-all; color: var(--tx1); max-width: none; padding: 10px 14px; font-family: 'SF Mono', monospace; font-size: 11px; }
+
+/* ── Pagination ── */
+.data-pagination {
+  display: flex; align-items: center; gap: 8px; justify-content: flex-end;
+  padding: 8px 12px; border-top: 1px solid var(--border);
+  background: var(--bg1); flex-shrink: 0;
+}
+.page-info { font-size: 12px; color: var(--tx1); }
+.page-info b { color: var(--tx0); }
+
+/* ── Severity badges ── */
+.sev {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700;
+  letter-spacing: .04em; white-space: nowrap; cursor: pointer;
+  min-width: 58px; text-align: center;
+}
+.sev:hover { filter: brightness(1.15); }
+.sev-critical { background: rgba(248,81,73,.2);  color: #ff6b63; border: 1px solid rgba(248,81,73,.3); }
+.sev-high     { background: rgba(255,166,87,.18); color: var(--orange); border: 1px solid rgba(255,166,87,.3); }
+.sev-medium   { background: rgba(227,179,65,.15); color: var(--yellow); border: 1px solid rgba(227,179,65,.3); }
+.sev-low      { background: rgba(88,166,255,.12); color: var(--blue); border: 1px solid rgba(88,166,255,.3); }
+.sev-info     { background: rgba(110,118,129,.15); color: var(--tx1); border: 1px solid var(--border); }
+.sev-unchecked { background: transparent; color: var(--tx2); font-size: 14px; font-weight: 400; border: none; min-width: auto; }
+
+/* ── Error level colors ── */
+.el-error   { color: var(--red); font-weight: 600; }
+.el-warn    { color: var(--orange); }
+.el-info    { color: var(--blue); }
+.el-debug   { color: var(--tx2); }
+
+/* ── Code refs modal ── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+.modal-overlay.open { display: flex; }
+.coderef-box {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); width: 660px; max-height: 82vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0,0,0,.5);
+}
+.coderef-header {
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.coderef-header-title { flex: 1; font-size: 13px; font-weight: 600; }
+.coderef-body { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.coderef-summary {
+  font-size: 12px; color: var(--tx0); background: var(--bg2);
+  padding: 12px 14px; border-radius: var(--radius); line-height: 1.65;
+  border-left: 3px solid var(--blue);
+}
+.coderef-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--tx2); }
+.coderef-item {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color .15s;
+}
+.coderef-item:hover { border-color: var(--blue); }
+.coderef-item a { color: var(--blue); text-decoration: none; font-size: 12px; font-weight: 500; }
+.coderef-item a:hover { text-decoration: underline; }
+.coderef-repo { font-size: 11px; color: var(--tx2); }
+
+/* ── Settings / Add Job modals ── */
+.modal-box {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); width: 500px; padding: 22px;
+  display: flex; flex-direction: column; gap: 18px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.5);
+}
+.modal-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.modal-subtitle { font-size: 12px; color: var(--tx1); margin-top: -10px; }
+
+/* ── Form ── */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-grid.full { grid-template-columns: 1fr; }
+.form-field { display: flex; flex-direction: column; gap: 5px; }
+.form-label { font-size: 11px; color: var(--tx1); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 6px; }
+.form-label .label-hint { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--green); }
+.form-input {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px;
+  color: var(--tx0); font-size: 12px; outline: none;
+  transition: border-color .15s;
+}
+.form-input:focus { border-color: var(--blue); background: var(--bg0); }
+.form-input::placeholder { color: var(--tx2); }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+/* ── Collection modal: source rows ── */
+.source-row { display:flex; gap:6px; align-items:center; background:var(--bg0); border:1px solid var(--border); border-radius:6px; padding:6px 8px; }
+.source-row .src-label { width:130px; flex-shrink:0; }
+.source-row .src-url   { flex:1; }
+.source-row .src-del   { flex-shrink:0; color:var(--red); background:none; border:none; cursor:pointer; font-size:14px; padding:2px 4px; }
+.source-row .src-del:hover { opacity:.7; }
+/* key chip */
+.key-chip { display:inline-flex; align-items:center; gap:4px; background:rgba(88,166,255,.12); border:1px solid rgba(88,166,255,.3); border-radius:12px; padding:2px 10px 2px 12px; font-size:11px; color:var(--blue); }
+.key-chip button { background:none; border:none; color:var(--tx2); cursor:pointer; font-size:12px; padding:0; line-height:1; }
+.key-chip button:hover { color:var(--red); }
+.key-input-row { display:flex; gap:6px; align-items:center; }
+/* ── Sidebar: collection items ── */
+.coll-item { cursor:pointer; padding:10px 14px; border-radius:6px; margin:2px 6px; }
+.coll-item:hover { background:var(--bg2); }
+.coll-item.active { background:var(--sel); }
+.coll-name { font-size:13px; font-weight:600; color:var(--tx0); }
+.coll-sources-list { margin-top:4px; display:flex; flex-direction:column; gap:2px; }
+.coll-source-item { font-size:11px; color:var(--tx2); padding:1px 0 1px 10px; border-left:2px solid var(--border); }
+.coll-source-item.running { color:var(--orange); border-color:var(--orange); }
+.coll-source-item.success { border-color:var(--green); }
+
+/* ── Config tab ── */
+.config-section { display: flex; flex-direction: column; gap: 12px; }
+.config-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--tx2); padding-bottom: 2px; }
+.config-danger { border-top: 1px solid var(--border); padding-top: 14px; display: flex; align-items: center; justify-content: space-between; }
+.config-danger-text { font-size: 12px; color: var(--tx1); }
+.config-danger-text b { color: var(--tx0); display: block; margin-bottom: 2px; }
+
+/* ── Toast notification ── */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 300;
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 280px; max-width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  transform: translateY(100px); opacity: 0;
+  transition: all .25s ease;
+  pointer-events: none;
+}
+.toast.visible { transform: translateY(0); opacity: 1; pointer-events: auto; }
+.toast-header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+.toast-body { font-size: 11px; color: var(--tx1); }
+.toast-progress { height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.toast-fill { height: 100%; background: var(--purple); transition: width .3s; border-radius: 2px; }
+
+/* ── Row action buttons ── */
+.row-actions { opacity: 0; transition: opacity .15s; }
+tr:hover .row-actions { opacity: 1; }
+
+/* ── Kibana document view ── */
+.kibana-doc-wrap { background: var(--bg0); }
+.kibana-doc-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  background: var(--bg1);
+}
+.kibana-doc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.kibana-field-row { border-bottom: 1px solid var(--border-subtle); }
+.kibana-field-row:hover { background: var(--bg2); }
+.kf-actions { padding: 4px 8px; white-space: nowrap; }
+.kf-btn {
+  border: 1px solid var(--border); background: var(--bg2); color: var(--tx1);
+  border-radius: 3px; padding: 1px 5px; font-size: 11px; cursor: pointer;
+  font-weight: 700; line-height: 1.4; transition: all .12s;
+}
+.kf-plus:hover  { background: rgba(63,185,80,.2); color: var(--green); border-color: var(--green); }
+.kf-minus:hover { background: rgba(248,81,73,.15); color: var(--red); border-color: var(--red); }
+.kf-name { padding: 5px 10px; font-family: 'SF Mono', monospace; font-size: 11px; color: var(--blue); font-weight: 500; white-space: nowrap; vertical-align: top; }
+.kf-meta { color: var(--purple); }
+.kf-value { padding: 5px 10px 5px 0; color: var(--tx0); font-size: 12px; word-break: break-all; white-space: pre-wrap; vertical-align: top; }
+.kf-json { background: var(--bg1); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; margin: 2px 0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; }
+.json-key   { color: var(--blue); }
+.json-str   { color: var(--green); }
+.json-num   { color: var(--orange); }
+.json-bool  { color: var(--purple); }
+.json-null  { color: var(--tx2); }
+
+/* ── Field filter chips ── */
+#exclude-chips { display: none; flex-wrap: wrap; gap: 4px; padding: 4px 12px; background: var(--bg1); border-bottom: 1px solid var(--border); }
+.exclude-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border-radius: 12px; padding: 2px 8px; font-size: 11px;
+}
+.exclude-chip.op-neq {
+  background: rgba(248,81,73,.12); border: 1px solid rgba(248,81,73,.3); color: var(--red);
+}
+.exclude-chip.op-eq {
+  background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.3); color: var(--green);
+}
+.exclude-chip button { background: none; border: none; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; color: inherit; opacity: .7; }
+.exclude-chip button:hover { opacity: 1; }
+
+/* ── Field panel search ── */
+.field-search-wrap { padding: 5px 6px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
+.field-search { width: 100%; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; color: var(--tx0); font-size: 11px; outline: none; transition: border-color .15s; }
+.field-search:focus { border-color: var(--blue); }
+.field-search::placeholder { color: var(--tx2); }
+
+/* ── Regex toggle ── */
+.regex-toggle {
+  cursor: pointer; border: 1px solid var(--border); background: var(--bg2);
+  color: var(--tx2); border-radius: var(--radius); padding: 5px 9px;
+  font-size: 11px; font-family: 'SF Mono', monospace; white-space: nowrap;
+  transition: all .15s; line-height: 1;
+}
+.regex-toggle:hover { border-color: var(--tx1); color: var(--tx0); }
+.regex-toggle.active { background: rgba(88,166,255,.15); color: var(--blue); border-color: var(--blue); }
+
+/* ── Bulk action bar ── */
+#bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 12px; background: rgba(88,166,255,.06); border-top: 1px solid rgba(88,166,255,.18); }
+#bulk-bar.visible { display: flex; }
+.bulk-count { font-size: 12px; color: var(--blue); font-weight: 600; white-space: nowrap; }
+.bulk-count-sep { height: 14px; width: 1px; background: rgba(88,166,255,.3); margin: 0 2px; }
+
+/* ── Checkbox select column ── */
+.col-select { width: 34px !important; min-width: 34px !important; max-width: 34px !important; padding: 4px 6px !important; text-align: center !important; }
+input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; height: 13px; }
+
+/* ── Similar modal ── */
+#similar-modal .modal-box { max-width: 460px; }
+#summary-modal .modal-box { max-width: 600px; }
+.summary-text-box {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; font-size: 13px; line-height: 1.7; color: var(--tx0);
+  white-space: pre-wrap; max-height: 400px; overflow-y: auto;
+}
+
+/* ── Groups sidebar section ── */
+.groups-section { border-top: 1px solid var(--border); padding: 10px 14px 8px; }
+.groups-section-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.groups-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--tx2); }
+.group-item { padding:5px 8px; border-radius:var(--radius); cursor:pointer; display:flex; align-items:center; gap:6px; transition:background .12s; font-size:12px; }
+.group-item:hover { background:var(--bg2); }
+.group-item.active { background:var(--bg2); color:var(--blue); }
+.group-dot { width:7px; height:7px; border-radius:50%; background:var(--blue); flex-shrink:0; }
+
+/* ── Group detail modal ── */
+.group-modal-box { background:var(--bg1); border:1px solid var(--border); border-radius:var(--radius-lg); padding:24px; width:620px; max-width:95vw; max-height:85vh; overflow-y:auto; }
+.group-member-chip { display:inline-flex; align-items:center; gap:6px; background:var(--bg2); border:1px solid var(--border); border-radius:20px; padding:3px 10px; font-size:11px; }
+.group-member-chip button { background:none; border:none; color:var(--red); cursor:pointer; font-size:13px; padding:0; line-height:1; }
+.key-row { display:flex; align-items:center; gap:8px; background:var(--bg2); border-radius:var(--radius); padding:6px 10px; font-size:11px; font-family:monospace; }
+.key-row .key-src { font-size:10px; padding:1px 5px; border-radius:3px; }
+.key-src-auto { background:rgba(88,166,255,.15); color:var(--blue); }
+.key-src-ai   { background:rgba(188,140,255,.15); color:var(--purple); }
+.key-src-manual { background:rgba(63,185,80,.15); color:var(--green); }
+.key-conf { color:var(--tx2); font-size:10px; }
+
+/* ── Correlated records panel ── */
+.corr-panel { margin:8px 12px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.corr-panel-hdr { background:var(--bg2); padding:6px 12px; font-size:11px; font-weight:600; color:var(--tx1); display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+.corr-panel-hdr:hover { background:var(--bg3); }
+.corr-panel-body { display:none; }
+.corr-panel-body.open { display:block; }
+.corr-record { border-top:1px solid var(--border-subtle); font-size:11px; }
+.corr-record-hdr { padding:7px 12px; cursor:pointer; display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+.corr-record-hdr:hover { background:rgba(255,255,255,.03); }
+.corr-source-badge { display:inline-block; background:rgba(88,166,255,.15); color:var(--blue); border:1px solid rgba(88,166,255,.3); border-radius:3px; padding:1px 6px; font-size:10px; font-weight:600; flex-shrink:0; }
+.corr-key-badge { display:inline-block; background:var(--bg2); color:var(--tx2); border-radius:3px; padding:1px 5px; font-size:10px; font-family:monospace; }
+.corr-message { color:var(--tx0); word-break:break-word; flex:1; min-width:0; }
+.corr-meta { color:var(--tx2); font-size:10px; white-space:nowrap; }
+.corr-expand-arrow { color:var(--tx2); font-size:10px; flex-shrink:0; transition:transform .15s; }
+.corr-expand-arrow.open { transform:rotate(90deg); }
+.corr-fields { display:none; border-top:1px solid var(--border-subtle); background:var(--bg0); }
+.corr-fields.open { display:block; }
+.corr-fields table { width:100%; border-collapse:collapse; font-size:11px; }
+.corr-fields td { padding:3px 10px; vertical-align:top; border-bottom:1px solid var(--border-subtle); }
+.corr-fields td:first-child { color:var(--blue); font-family:monospace; width:180px; white-space:nowrap; padding-left:28px; }
+.corr-fields td:last-child { color:var(--tx0); word-break:break-all; white-space:pre-wrap; }
+
+.field-source-hdr { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--blue); padding:8px 12px 4px; display:flex; align-items:center; gap:5px; }
+.field-source-hdr .src-dot { width:6px; height:6px; border-radius:50%; background:var(--blue); }
+.field-item.linked { opacity:.85; }
+.field-item.linked label { color:var(--tx1); }
+.field-item.linked.selected label { color:var(--blue); }
+.linked-val { color:var(--blue); font-style:italic; }
+.linked-col-hdr { color:var(--blue); font-size:10px; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🔍</div>
+    Kibana <em>Scraper</em>
+  </div>
+  <div class="header-sep"></div>
+  <div class="stat-chip">Jobs <b id="s-jobs">–</b></div>
+  <div class="stat-chip" id="rows-chip" title="Total rows across all jobs">Rows <b id="s-rows">–</b></div>
+  <div class="spacer"></div>
+  <!-- Background Jobs indicator -->
+  <div style="position:relative;">
+    <button class="bgjobs-btn" id="bgjobs-btn" onclick="toggleBgPanel()" title="Background Jobs">
+      <span id="bgjobs-icon">⚙</span>
+      <span id="bgjobs-label">Jobs</span>
+      <span id="bgjobs-count" class="bj-count" style="display:none;">0</span>
+    </button>
+    <div class="bgjobs-panel" id="bgjobs-panel" style="display:none;">
+      <div class="bgjobs-panel-hdr">
+        <span>Background Jobs</span>
+        <button onclick="clearFinishedJobs()">Clear finished</button>
+      </div>
+      <div class="bgjobs-list" id="bgjobs-list">
+        <div class="bgjobs-empty">No background jobs yet</div>
+      </div>
+    </div>
+  </div>
+  <div class="header-sep"></div>
+  <button class="btn btn-ghost btn-sm" onclick="openGroupModal()" title="Log Correlation Groups">🔗 Groups</button>
+  <button class="btn btn-ghost btn-sm" onclick="openSettings()" id="btn-settings">⚙ Keys</button>
+  <button class="btn btn-green btn-sm" onclick="openAddJob()">+ Add Job</button>
+</header>
+
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="sidebar-hdr">
+      <span class="sidebar-hdr-label">Jobs</span>
+    </div>
+    <div id="job-list"><div style="padding:14px;color:var(--tx2);font-size:12px;">Loading…</div></div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main id="main">
+
+    <!-- Welcome -->
+    <div class="welcome" id="welcome">
+      <div class="welcome-icon">📊</div>
+      <h2>No job selected</h2>
+      <p>Add a Kibana Discover URL to start collecting logs.</p>
+      <button class="btn btn-green" onclick="openAddJob()">+ Add your first job</button>
+    </div>
+
+    <!-- Job detail -->
+    <div id="job-detail" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+
+      <!-- Detail header -->
+      <div class="detail-header">
+        <div class="detail-info">
+          <div class="detail-name" id="d-name">–</div>
+          <div class="detail-url" id="d-url">–</div>
+        </div>
+        <span id="d-schedule" class="detail-sched"></span>
+        <button class="btn btn-ghost btn-sm" onclick="openEditJob()">Edit</button>
+        <button class="btn btn-green btn-sm" id="btn-run" onclick="runNow()">▶ Run Now</button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('runs')"   id="tab-runs">Runs</div>
+        <div class="tab"        onclick="switchTab('live')"   id="tab-live">Live Log</div>
+        <div class="tab"        onclick="switchTab('data')"   id="tab-data">Data</div>
+        <div class="tab"        onclick="switchTab('config')" id="tab-config">Config</div>
+      </div>
+
+      <!-- ── RUNS tab ── -->
+      <div class="tab-pane active" id="pane-runs">
+        <div class="card">
+          <div class="card-header">
+            <span>Run History</span>
+            <span id="run-count" style="color:var(--tx2);font-weight:400;font-size:11px;"></span>
+          </div>
+          <div id="runs-list"><div style="padding:14px;color:var(--tx2);font-size:12px;">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- ── LIVE tab ── -->
+      <div class="tab-pane" id="pane-live">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:12px;color:var(--tx1);" id="live-title">No active run</span>
+          <button class="btn btn-ghost btn-sm" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="terminal" id="terminal"></div>
+        <div id="log-done" style="display:none;" class="log-done"></div>
+      </div>
+
+      <!-- ── DATA tab ── -->
+      <div class="tab-pane" id="pane-data">
+
+        <!-- Toolbar row 1: search + date filter -->
+        <div class="data-toolbar">
+          <div class="data-toolbar-row">
+            <div class="data-search-wrap">
+              <span class="search-icon">🔍</span>
+              <input class="filter-input search-input" id="data-search" type="text"
+                     placeholder="Search message / URI / store_id…"
+                     onkeydown="if(event.key==='Enter') applyDataFilter()" />
+            </div>
+            <button class="regex-toggle" id="regex-toggle" onclick="toggleRegex()" title="Toggle regex mode">.*</button>
+            <span class="filter-label">From</span>
+            <input class="filter-input" id="data-from" type="datetime-local" />
+            <span class="filter-label">To</span>
+            <input class="filter-input" id="data-to" type="datetime-local" />
+            <button class="btn btn-blue btn-sm" onclick="applyDataFilter()">Apply</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearDataFilter()">Clear</button>
+            <div class="toolbar-sep"></div>
+            <span class="data-total-badge" id="data-total"></span>
+          </div>
+
+          <!-- Bulk actions bar (visible when rows selected) -->
+          <div id="bulk-bar">
+            <span class="bulk-count"><b id="bulk-count-num">0</b> selected</span>
+            <span class="bulk-count-sep"></span>
+            <button class="btn btn-sm" style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);padding:3px 9px;font-size:11px;" onclick="bulkMarkSelected('relevant')">✓ Mark Relevant</button>
+            <button class="btn btn-sm" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);padding:3px 9px;font-size:11px;" onclick="bulkMarkSelected('irrelevant')">✗ Mark Irrelevant</button>
+            <button class="btn btn-sm btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--tx2);" onclick="clearSelection()">✕ Clear</button>
+          </div>
+
+          <!-- Toolbar row 2: relevance filters + analyze -->
+          <div class="data-toolbar-row">
+            <div class="rel-pills">
+              <button class="rel-pill active" id="rpill-all"        onclick="setRelFilter('')">All</button>
+              <button class="rel-pill"         id="rpill-relevant"   onclick="setRelFilter('relevant')">✓ Relevant</button>
+              <button class="rel-pill"         id="rpill-irrelevant" onclick="setRelFilter('irrelevant')">✗ Irrelevant</button>
+              <button class="rel-pill"         id="rpill-unchecked"  onclick="setRelFilter('unchecked')">• Unchecked</button>
+            </div>
+            <div class="spacer"></div>
+            <span class="analyze-status-text" id="analyze-status" style="display:none;"></span>
+            <div class="analyze-wrap">
+              <button class="btn btn-purple btn-sm" id="btn-analyze" onclick="startAnalysis()">🤖 Analyze with AI</button>
+              <div class="analyze-progress-bar" id="analyze-pbar">
+                <div class="analyze-bar-fill" id="analyze-bar-fill" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="analyze-wrap" style="margin-left:6px;">
+              <button class="btn btn-sm" id="btn-autoclassify"
+                      style="background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.35);"
+                      onclick="startAutoClassify()">⚡ Auto-Classify</button>
+              <div class="analyze-progress-bar" id="autoclassify-pbar">
+                <div class="analyze-bar-fill" id="autoclassify-bar-fill" style="width:0%;background:var(--blue);"></div>
+              </div>
+            </div>
+            <div class="toolbar-sep"></div>
+            <button class="btn btn-ghost btn-sm" onclick="refreshData()" title="Refresh">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" id="btn-summary" onclick="showSummary()">📋 Summary</button>
+          </div>
+        </div>
+
+        <!-- Exclude filter chips -->
+        <div id="exclude-chips"></div>
+
+        <!-- Body: field panel + table -->
+        <div class="data-body">
+
+          <div class="field-panel" id="field-panel">
+            <div class="field-panel-hdr">
+              <span class="field-panel-label">Fields</span>
+              <span class="collapse-btn" title="Collapse" onclick="toggleFieldPanel()">‹</span>
+            </div>
+            <div class="field-search-wrap" id="field-search-wrap">
+              <input class="field-search" id="field-search-input" type="text"
+                     placeholder="Filter fields…" oninput="filterFields(this.value)" />
+            </div>
+            <div id="field-list"><div style="padding:10px;color:var(--tx2);font-size:11px;">Loading…</div></div>
+          </div>
+
+          <div class="data-table-area">
+            <div class="data-table-wrap">
+              <table>
+                <thead id="data-thead"><tr></tr></thead>
+                <tbody id="data-tbody"></tbody>
+              </table>
+            </div>
+
+            <!-- Pagination at bottom -->
+            <div class="data-pagination">
+              <span class="filter-label">Per page</span>
+              <select class="filter-input" id="per-page-select" onchange="setPerPage(+this.value)" style="width:68px;padding:3px 6px;">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+              <div class="toolbar-sep"></div>
+              <button class="btn btn-ghost btn-sm btn-icon" onclick="dataPage(-1)">‹</button>
+              <span class="page-info" id="data-page-info">–</span>
+              <button class="btn btn-ghost btn-sm btn-icon" onclick="dataPage(1)">›</button>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /pane-data -->
+
+      <!-- ── CONFIG tab ── -->
+      <div class="tab-pane" id="pane-config">
+        <div class="card" style="padding:18px;">
+          <div id="config-form"></div>
+        </div>
+      </div>
+
+    </div><!-- /job-detail -->
+  </main>
+</div>
+
+<!-- ── Group Management Modal ── -->
+<div class="modal-overlay" id="group-modal">
+  <div class="group-modal-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div class="modal-title" style="margin:0;">🔗 Log Correlation Groups</div>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('group-modal').classList.remove('open')">✕</button>
+    </div>
+
+    <!-- Create new group -->
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input class="form-input" id="new-group-name" placeholder="New group name (e.g. Checkout Logs)" style="flex:1;" />
+      <button class="btn btn-green btn-sm" onclick="createGroup()">+ Create</button>
+    </div>
+
+    <div id="groups-list-container">
+      <div style="color:var(--tx2);font-size:12px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast">
+  <div class="toast-header">
+    <span id="toast-icon">🤖</span>
+    <span id="toast-title">Analyzing…</span>
+  </div>
+  <div class="toast-body" id="toast-body"></div>
+  <div class="toast-progress"><div class="toast-fill" id="toast-fill" style="width:0%"></div></div>
+</div>
+
+<!-- ── Code Refs Modal ── -->
+<div class="modal-overlay" id="coderef-modal">
+  <div class="coderef-box">
+    <div class="coderef-header">
+      <div>
+        <div class="coderef-header-title" id="cr-title">AI Analysis</div>
+        <div id="cr-rel-label" style="font-size:11px;color:var(--tx2);margin-top:2px;"></div>
+      </div>
+      <span id="cr-severity-badge"></span>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('coderef-modal').classList.remove('open')">✕</button>
+    </div>
+    <div class="coderef-body">
+      <div class="coderef-summary" id="cr-summary"></div>
+      <div id="cr-refs"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Modal ── -->
+<div class="modal-overlay" id="gh-modal">
+  <div class="modal-box">
+    <div class="modal-title">⚙ API Keys</div>
+    <p class="modal-subtitle">Saved locally to <code style="background:var(--bg2);padding:1px 5px;border-radius:3px;font-size:11px;">keys.json</code> — never leave your machine.</p>
+    <div class="form-field">
+      <label class="form-label">
+        Anthropic API Key
+        <span id="ak-status" class="label-hint"></span>
+      </label>
+      <input class="form-input" id="anthropic-key-input" type="password" placeholder="sk-ant-api03-…" />
+    </div>
+    <div class="form-field">
+      <label class="form-label">
+        GitHub Token <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(read:org, repo)</span>
+        <span id="gh-status" class="label-hint"></span>
+      </label>
+      <input class="form-input" id="gh-token-input" type="password" placeholder="ghp_…" />
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('gh-modal').classList.remove('open')">Cancel</button>
+      <button class="btn btn-green" onclick="saveApiKeys()">Save Keys</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Add / Edit Collection Modal ── -->
+<div class="modal-overlay" id="modal">
+  <div class="modal-box" style="width:680px;max-width:96vw;">
+    <div class="modal-title" id="modal-title">Add Job</div>
+
+    <!-- Name + Schedule row -->
+    <div class="form-grid">
+      <div class="form-field" style="flex:2;">
+        <label class="form-label">Collection Name</label>
+        <input class="form-input" id="f-name" placeholder="e.g. Checkout Logs" />
+      </div>
+      <div class="form-field">
+        <label class="form-label">Daily Run (UTC hour)</label>
+        <input class="form-input" id="f-hour" type="number" value="2" min="0" max="23" />
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label">Time Range</label>
+        <select class="form-input" id="f-time">
+          <option>Last 15 minutes</option><option>Last 1 hour</option>
+          <option>Last 24 hours</option><option selected>Last 7 days</option>
+          <option>Last 30 days</option><option>Last 90 days</option><option>Last 1 year</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Chunk Window</label>
+        <select class="form-input" id="f-chunk">
+          <option value="0">Disabled (single pass)</option>
+          <option value="1">1h per chunk</option><option value="2">2h per chunk</option>
+          <option value="4">4h per chunk</option><option value="6">6h per chunk</option>
+          <option value="12">12h per chunk</option><option value="24">24h per chunk</option>
+          <option value="48">48h per chunk</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Enabled</label>
+        <select class="form-input" id="f-enabled">
+          <option value="true">Yes — run daily</option>
+          <option value="false">No — manual only</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Log Sources -->
+    <div style="margin-top:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);">Log Sources</span>
+        <button class="btn btn-ghost btn-sm" onclick="addSourceRow()">+ Add Source</button>
+      </div>
+      <div id="f-sources" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
+    <!-- Correlation Keys -->
+    <div style="margin-top:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);">Correlation Keys <span style="font-weight:400;color:var(--tx2);text-transform:none;">(fields to link records across sources)</span></span>
+        <button class="btn btn-ghost btn-sm" onclick="addKeyRow()">+ Add Key</button>
+      </div>
+      <div id="f-keys" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:28px;"></div>
+    </div>
+
+    <div class="form-actions" style="margin-top:18px;">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-green" id="modal-save" onclick="saveCollection()">Save Job</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Similar records modal ── -->
+<div class="modal-overlay" id="similar-modal">
+  <div class="modal-box">
+    <div class="modal-title">🔍 Similar Records Found</div>
+    <p style="font-size:13px;color:var(--tx1);line-height:1.6;">
+      Found <b id="similar-count">0</b> other records with the same message:<br>
+      <code style="background:var(--bg2);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--orange);" id="similar-msg"></code>
+    </p>
+    <p style="font-size:12px;color:var(--tx2);">Do you want to mark all of them as irrelevant too?</p>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('similar-modal').classList.remove('open');_similarIds_=[];_similarRelevance_='irrelevant';">No, skip</button>
+      <button class="btn btn-red" onclick="bulkMarkSimilar()">✗ Mark All Irrelevant</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Summary modal ── -->
+<div class="modal-overlay" id="summary-modal">
+  <div class="modal-box" style="max-width:600px;width:600px;">
+    <div class="modal-title">📋 AI Summary</div>
+    <p style="font-size:12px;color:var(--tx2);margin-top:-10px;">Summarizing <b id="summary-count">0</b> visible records</p>
+    <div class="summary-text-box" id="summary-text"></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('summary-modal').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let jobs = [], selJobId = null, editJobId = null;
+let collections_ = [], selCollId = null;
+let dataPage_ = 1;
+let activeRunIds_ = {};   // {jobId: runId}  — one active run per job
+let activeESes_   = {};   // {jobId: EventSource}
+let sortField_ = 'timestamp', sortDir_ = 'desc';
+let dataFields_ = [], dataSelectedFields_ = null, lastDataRows_ = null;
+let relFilter_ = '';
+let fieldPanelCollapsed_ = false;
+let perPage_ = 50;
+let selectedRows_ = new Set();
+let regexMode_ = false;
+let fieldSearch_ = '';
+const LINKED_SEP = '\x1E';   // separates "SourceLabel\x1Efield_name" for linked fields
+let linkedJobFields_ = [];   // [{label, job_id, fields:[...]}]
+let corrDataCache_ = {};     // {log_id: [{_source_label, raw_json, ...}]}
+
+const DATA_DB_MAP = { '@timestamp': r => r.timestamp };
+const DEFAULT_FIELDS = ['@timestamp'];
+const PRIORITY_FIELDS = [
+  '@timestamp','error_level','message','store_id',
+  'request_uri','server_name','domain','http_status_code',
+  'remote_addr','request_method'
+];
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadStats(), loadJobs()]);
+  setInterval(loadStats, 10_000);
+  setInterval(() => { if (selJobId) loadRuns(selJobId); }, 8_000);
+  // loadJobs already calls loadCollections internally — refreshes ALL sidebar dots
+  setInterval(loadJobs, 5_000);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+const api = {
+  get:    url      => fetch(url).then(r => r.json()),
+  post:   (url, b) => fetch(url, {method:'POST',  headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}).then(r=>r.json()),
+  put:    (url, b) => fetch(url, {method:'PUT',   headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}).then(r=>r.json()),
+  delete: url      => fetch(url, {method:'DELETE'}).then(r=>r.json()),
+  del:    async (url) => { const r = await fetch(url, {method:'DELETE', headers:{'Content-Type':'application/json'}}); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); },
+};
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const s = await api.get('/api/stats');
+  document.getElementById('s-jobs').textContent = s.total_jobs;
+  // Only overwrite the rows chip when no job is selected (otherwise loadData keeps it current)
+  if (!selJobId) {
+    document.getElementById('s-rows').textContent = (s.total_rows||0).toLocaleString();
+    document.getElementById('rows-chip').title = 'Total rows across all jobs';
+  }
+}
+
+function _updateRowsChip(count, jobName) {
+  document.getElementById('s-rows').textContent = (count||0).toLocaleString();
+  document.getElementById('rows-chip').title = jobName ? `Rows in "${jobName}"` : 'Total rows across all jobs';
+}
+
+// ── Collections + Jobs ───────────────────────────────────────────────────────
+async function loadCollections() {
+  try { collections_ = await api.get('/api/collections') || []; } catch(e) { collections_ = []; }
+}
+
+async function loadJobs() {
+  // Load collections first so sidebar dots use fresh source statuses
+  await loadCollections();
+  jobs = await api.get('/api/jobs');
+  // Collect job IDs that belong to collections (don't show them as standalone)
+  const collJobIds = new Set(
+    collections_.flatMap(c => (c.sources||[]).map(s=>s.job_id).filter(Boolean))
+  );
+  renderSidebar(collJobIds);
+  if (selCollId) {
+    const c = collections_.find(c=>c.id===selCollId);
+    if (c) {
+      if (selJobId && (c.sources||[]).some(s=>s.job_id===selJobId)) {
+        updateDetailHeaderForCollectionSource(c, selJobId);
+      } else {
+        updateDetailHeaderForCollection(c);
+      }
+    }
+  } else if (selJobId) {
+    const j = jobs.find(j=>j.id===selJobId);
+    if (j) updateDetailHeader(j);
+  }
+}
+
+function renderSidebar(collJobIds) {
+  const el = document.getElementById('job-list');
+  const parts = [];
+
+  // ── Collections ──────────────────────────────────────────────────────────────
+  for (const c of collections_) {
+    const anyRunning = (c.sources||[]).some(s => s.is_running);
+    const status = c.last_run_status;
+    const dotCls = anyRunning ? 'dot-running' : status==='success' ? 'dot-success' : status==='failed' ? 'dot-failed' : 'dot-none';
+    const when   = c.last_run_at ? timeAgo(c.last_run_at) : 'never';
+    const keysStr = (c.corr_keys||[]).length ? `<span style="font-size:10px;color:var(--blue);margin-left:4px;">🔗 ${c.corr_keys.join(', ')}</span>` : '';
+
+    const srcHtml = (c.sources||[]).map(s => {
+      const srcCls = s.is_running ? 'running' : s.last_run_status==='success' ? 'success' : '';
+      const srcActive = s.job_id === selJobId && selCollId === c.id ? ' style="color:var(--tx0);font-weight:600;"' : '';
+      return `<div class="coll-source-item ${srcCls}" onclick="event.stopPropagation();selectCollectionSource(${c.id},${s.job_id})" title="${esc(s.label)}"${srcActive}>${esc(s.label)}</div>`;
+    }).join('');
+
+    parts.push(`<div class="coll-item ${c.id===selCollId?'active':''}" onclick="selectCollection(${c.id})">
+      <div class="coll-name">${esc(c.name)}</div>
+      <div class="job-meta" style="margin-top:2px;">
+        <span class="dot ${dotCls}"></span>
+        <span class="job-meta-text" style="font-size:10px;">${anyRunning?'Running…':when}</span>
+        ${keysStr}
+      </div>
+      ${srcHtml ? `<div class="coll-sources-list">${srcHtml}</div>` : ''}
+    </div>`);
+  }
+
+  // ── Standalone jobs (not in any collection) ──────────────────────────────────
+  const standaloneJobs = jobs.filter(j => !collJobIds.has(j.id));
+  if (standaloneJobs.length && collections_.length) {
+    parts.push(`<div style="font-size:10px;color:var(--tx2);padding:8px 14px 2px;text-transform:uppercase;letter-spacing:.05em;">Standalone</div>`);
+  }
+  for (const j of standaloneJobs) {
+    const dotCls = j.is_running ? 'dot-running' : j.last_run_status==='success' ? 'dot-success' : j.last_run_status==='failed' ? 'dot-failed' : 'dot-none';
+    const when   = j.last_run_at ? timeAgo(j.last_run_at) : 'never';
+    parts.push(`<div class="job-item ${j.id===selJobId&&!selCollId?'active':''}" onclick="selectJob(${j.id})">
+      <div class="job-name">${esc(j.name)}</div>
+      <div class="job-meta">
+        <span class="dot ${dotCls}"></span>
+        <span class="job-meta-text">${j.is_running?'Running…':when}</span>
+      </div>
+    </div>`);
+  }
+
+  el.innerHTML = parts.join('') || '<div style="padding:14px;color:var(--tx2);font-size:12px;">No jobs yet</div>';
+}
+
+async function selectJob(id) {
+  if (selJobId !== id) {
+    dataFields_=[]; dataSelectedFields_=null; lastDataRows_=null; dataPage_=1;
+    linkedJobFields_ = []; corrDataCache_ = {};
+    selectedRows_.clear(); updateBulkBar();
+    document.getElementById('data-search').value='';
+    document.getElementById('data-from').value='';
+    document.getElementById('data-to').value='';
+    fieldFilters_ = []; renderExcludeChips();
+  }
+  selJobId = id;
+  selCollId = null;   // selecting a standalone job clears collection selection
+  const collJobIds = new Set(collections_.flatMap(c=>(c.sources||[]).map(s=>s.job_id).filter(Boolean)));
+  renderSidebar(collJobIds);
+  document.getElementById('welcome').style.display='none';
+  const d=document.getElementById('job-detail'); d.style.display='flex';
+  const job = jobs.find(j=>j.id===id);
+  updateDetailHeader(job);
+
+  // If this job has an active stream, go straight to Live Log and reconnect
+  if (activeESes_[id] || (job && job.is_running && activeRunIds_[id])) {
+    switchTab('live');
+    reconnectLiveLog(id);
+  } else {
+    switchTab('data');
+  }
+  await loadRuns(id);
+}
+
+function updateDetailHeader(job) {
+  if (!job) return;
+  document.getElementById('d-name').textContent = job.name;
+  document.getElementById('d-url').textContent  = job.kibana_url;
+  const chunkLabel = job.chunk_hours > 0 ? ` · ${job.chunk_hours}h chunks` : '';
+  document.getElementById('d-schedule').textContent =
+    `Daily @ ${String(job.schedule_hour).padStart(2,'0')}:00 UTC · ${job.time_range}${chunkLabel}`;
+  const btn = document.getElementById('btn-run');
+  btn.disabled    = !!job.is_running;
+  btn.textContent = job.is_running ? '⟳ Running…' : '▶ Run Now';
+  btn.onclick     = () => runNow();
+}
+
+// ── Collection selection + run ────────────────────────────────────────────────
+async function selectCollection(cid) {
+  selCollId = cid;
+  // Use first source's job as the "active job" for data/runs tabs
+  const coll = collections_.find(c=>c.id===cid);
+  const firstJobId = coll?.sources?.[0]?.job_id;
+  if (firstJobId && selJobId !== firstJobId) {
+    dataFields_=[]; dataSelectedFields_=null; lastDataRows_=null; dataPage_=1;
+    linkedJobFields_=[]; corrDataCache_={};
+    selectedRows_.clear(); updateBulkBar();
+    document.getElementById('data-search').value='';
+    document.getElementById('data-from').value='';
+    document.getElementById('data-to').value='';
+    fieldFilters_ = []; renderExcludeChips();
+    selJobId = firstJobId;
+  }
+  const collJobIds = new Set(collections_.flatMap(c=>(c.sources||[]).map(s=>s.job_id).filter(Boolean)));
+  renderSidebar(collJobIds);
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('job-detail').style.display='flex';
+  if (coll) updateDetailHeaderForCollection(coll);
+  if (firstJobId) await loadRuns(firstJobId);
+}
+
+// Click a specific source within a collection — keeps collection context
+async function selectCollectionSource(collId, jobId) {
+  selCollId = collId;
+  if (selJobId !== jobId) {
+    dataFields_=[]; dataSelectedFields_=null; lastDataRows_=null; dataPage_=1;
+    linkedJobFields_=[]; corrDataCache_={};
+    selectedRows_.clear(); updateBulkBar();
+    document.getElementById('data-search').value='';
+    document.getElementById('data-from').value='';
+    document.getElementById('data-to').value='';
+    fieldFilters_ = []; renderExcludeChips();
+    selJobId = jobId;
+  }
+  const coll = collections_.find(c=>c.id===collId);
+  const collJobIds = new Set(collections_.flatMap(c=>(c.sources||[]).map(s=>s.job_id).filter(Boolean)));
+  renderSidebar(collJobIds);
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('job-detail').style.display='flex';
+  // Header: show collection name + source name, subtitle shows both source URLs
+  if (coll) updateDetailHeaderForCollectionSource(coll, jobId);
+  if (activeESes_[jobId] || (jobs.find(j=>j.id===jobId)||{}).is_running) {
+    switchTab('live');
+    reconnectLiveLog(jobId);
+  } else {
+    switchTab('data');
+  }
+  await loadRuns(jobId);
+}
+
+function updateDetailHeaderForCollectionSource(coll, jobId) {
+  const src = (coll.sources||[]).find(s=>s.job_id===jobId);
+  const srcName = src ? src.label : `Job ${jobId}`;
+  const anyRunning = (coll.sources||[]).some(s=>s.is_running);
+  document.getElementById('d-name').textContent = `${coll.name}  ›  ${srcName}`;
+  // Subtitle: all source URLs joined
+  const srcUrls = (coll.sources||[]).map(s=>s.kibana_url).join('  |  ');
+  document.getElementById('d-url').textContent = srcUrls || '–';
+  const chunkLabel = coll.chunk_hours > 0 ? ` · ${coll.chunk_hours}h chunks` : '';
+  const keysLabel  = (coll.corr_keys||[]).length ? ` · 🔗 ${coll.corr_keys.join(', ')}` : '';
+  document.getElementById('d-schedule').textContent =
+    `Daily @ ${String(coll.schedule_hour||2).padStart(2,'0')}:00 UTC · ${coll.time_range}${chunkLabel}${keysLabel}`;
+  const btn = document.getElementById('btn-run');
+  btn.disabled    = anyRunning;
+  btn.textContent = anyRunning ? '⟳ Running…' : '▶ Run All';
+  btn.onclick     = () => runCollection(coll.id);
+}
+
+function updateDetailHeaderForCollection(coll) {
+  const anyRunning = (coll.sources||[]).some(s=>s.is_running);
+  document.getElementById('d-name').textContent = coll.name;
+  const srcNames = (coll.sources||[]).map(s=>s.label).join(' · ');
+  document.getElementById('d-url').textContent = srcNames || '–';
+  const chunkLabel = coll.chunk_hours > 0 ? ` · ${coll.chunk_hours}h chunks` : '';
+  const keysLabel  = (coll.corr_keys||[]).length ? ` · 🔗 ${coll.corr_keys.join(', ')}` : '';
+  document.getElementById('d-schedule').textContent =
+    `Daily @ ${String(coll.schedule_hour||2).padStart(2,'0')}:00 UTC · ${coll.time_range}${chunkLabel}${keysLabel}`;
+  const btn = document.getElementById('btn-run');
+  btn.disabled    = anyRunning;
+  btn.textContent = anyRunning ? '⟳ Running…' : '▶ Run All';
+  btn.onclick     = () => runCollection(coll.id);
+}
+
+async function runCollection(cid) {
+  const coll = collections_.find(c=>c.id===cid);
+  const name = coll?.name || `Collection ${cid}`;
+  const btn = document.getElementById('btn-run');
+  btn.disabled = true; btn.textContent = '⟳ Running…';
+  const r = await api.post(`/api/collections/${cid}/run`, {});
+  if (r.run_id) {
+    const firstJobId = coll?.sources?.[0]?.job_id;
+    switchTab('live');
+    streamRun(r.run_id, firstJobId || selJobId);
+  }
+  setTimeout(()=>loadJobs(), 1000);
+}
+
+async function deleteCollection(cid) {
+  const coll = collections_.find(c=>c.id===cid);
+  const name = coll?.name || `Collection ${cid}`;
+  if (!confirm(`Delete "${name}"?\n\nThis will permanently remove all sources, log data, run history, and correlations.\n\nThis cannot be undone.`)) return;
+  showToast('🗑', 'Deleting…', `Removing "${name}"`, 0);
+  await api.del(`/api/collections/${cid}`);
+  showToast('✓', 'Deleted', `"${name}" removed`, 100);
+  hideToast(3000);
+  selCollId = null; selJobId = null;
+  document.getElementById('job-detail').style.display='none';
+  document.getElementById('welcome').style.display='flex';
+  await loadJobs();
+  await loadStats();
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  ['runs','live','data','config'].forEach(t => {
+    document.getElementById('tab-'+t).classList.toggle('active', t===name);
+    document.getElementById('pane-'+t).classList.toggle('active', t===name);
+  });
+  if (name==='data' && selJobId) {
+    if (!dataFields_.length) loadFields(selJobId).then(()=>loadData(selJobId, dataPage_));
+    else loadData(selJobId, dataPage_);
+  }
+  if (name==='config') {
+    if (selCollId) renderConfigFormCollection(collections_.find(c=>c.id===selCollId));
+    else if (selJobId) renderConfigForm(jobs.find(j=>j.id===selJobId));
+  }
+  // When manually clicking Live Log tab, reconnect to this job's active stream if any
+  if (name==='live' && selJobId && activeESes_[selJobId]) reconnectLiveLog(selJobId);
+}
+
+// ── Runs ──────────────────────────────────────────────────────────────────────
+async function loadRuns(jobId) {
+  const runs = await api.get(`/api/jobs/${jobId}/runs`);
+  document.getElementById('run-count').textContent = `${runs.length} run${runs.length!==1?'s':''}`;
+  const el = document.getElementById('runs-list');
+  if (!runs.length) {
+    el.innerHTML = '<div style="padding:16px 14px;color:var(--tx2);font-size:12px;">No runs yet — click Run Now to start.</div>';
+    return;
+  }
+  el.innerHTML = runs.map(r => {
+    const dur = r.finished_at ? elapsed(r.started_at, r.finished_at) : 'running…';
+    return `<div class="run-row" onclick="viewRun(${r.id})">
+      <span class="badge badge-${r.status}">${r.status}</span>
+      <span style="color:var(--tx0);">${fmtDate(r.started_at)}</span>
+      <span style="color:var(--tx1);font-size:11px;">${dur}</span>
+      <span style="color:var(--green);font-size:11px;">${r.rows_saved>0?'+'+r.rows_saved+' rows':''}</span>
+      <span style="color:var(--tx2);font-size:11px;">View →</span>
+    </div>`;
+  }).join('');
+}
+
+function viewRun(runId) { switchTab('live'); streamRun(runId, selJobId); }
+
+// ── Run Now ───────────────────────────────────────────────────────────────────
+async function runNow() {
+  const btn=document.getElementById('btn-run');
+  btn.disabled=true; btn.textContent='⟳ Running…';
+  const jobId = selJobId;
+  const r=await api.post(`/api/jobs/${jobId}/run`);
+  switchTab('live');
+  streamRun(r.run_id, jobId);
+  setTimeout(()=>loadJobs(), 1000);
+}
+
+// ── SSE run stream ────────────────────────────────────────────────────────────
+// jobId is which job owns this stream (defaults to selJobId for backwards compat)
+function streamRun(runId, jobId) {
+  if (jobId == null) jobId = selJobId;
+
+  // Close any existing stream for this job
+  if (activeESes_[jobId]) { try{activeESes_[jobId].close();}catch(e){} }
+  activeRunIds_[jobId] = runId;
+
+  const isVisible = (selJobId === jobId);   // is this job currently on screen?
+
+  // Only touch the DOM if this job is the one currently selected
+  function _dom(fn) { if (selJobId === jobId) fn(); }
+
+  _dom(()=>{
+    document.getElementById('terminal').innerHTML='';
+    document.getElementById('log-done').style.display='none';
+    document.getElementById('live-title').textContent=`Run #${runId} — streaming…`;
+  });
+
+  const es = new EventSource(`/api/runs/${runId}/stream`);
+  activeESes_[jobId] = es;
+
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if (d.type==='log') {
+      _dom(()=>{
+        const term=document.getElementById('terminal');
+        const line=document.createElement('div');
+        line.className='log-line '+lineClass(d.line);
+        line.textContent=d.line;
+        term.appendChild(line); term.scrollTop=term.scrollHeight;
+      });
+    } else if (d.type==='done') {
+      es.close();
+      delete activeESes_[jobId];
+      _dom(()=>{
+        const runId2=activeRunIds_[jobId];
+        document.getElementById('live-title').textContent=`Run #${runId2} — ${d.status}`;
+        const done=document.getElementById('log-done');
+        done.className=`log-done ${d.status}`;
+        done.textContent=d.status==='success'?'✓ Completed successfully':'✗ Run failed';
+        done.style.display='block';
+      });
+      loadJobs(); loadRuns(jobId === selJobId ? selJobId : null);
+    }
+  };
+  es.onerror=()=>{
+    _dom(()=>{ document.getElementById('live-title').textContent=`Run #${runId} — connection closed`; });
+  };
+}
+
+// Reconnect Live Log to whichever run is active for a job (called on tab/job switch)
+function reconnectLiveLog(jobId) {
+  const runId = activeRunIds_[jobId];
+  if (!runId) return;          // no active stream for this job
+  const es = activeESes_[jobId];
+
+  const term  = document.getElementById('terminal');
+  const done  = document.getElementById('log-done');
+  const title = document.getElementById('live-title');
+
+  if (es && es.readyState !== EventSource.CLOSED) {
+    // Stream still live — just update the title; new messages will appear via onmessage
+    title.textContent = `Run #${runId} — streaming…`;
+    done.style.display='none';
+    // The onmessage handler uses _dom() which checks selJobId === jobId,
+    // so after selectJob sets selJobId we automatically get DOM updates
+  } else {
+    // Stream ended or not started — show completed state
+    title.textContent = `Run #${runId} — finished`;
+    done.style.display='none';
+    // Replay log from server
+    streamRun(runId, jobId);
+  }
+}
+
+function lineClass(line) {
+  if (!line) return '';
+  if (line.startsWith('━━━ CHUNK')) return 'chunk-hdr';
+  if (line.includes('[✓]')||line.includes('Done')) return 'ok';
+  if (line.includes('[✗]')||line.includes('ERROR')||line.includes('failed')) return 'err';
+  if (line.includes('[!]')||line.includes('warning')) return 'warn';
+  if (line.includes('[→]')||line.includes('[net]')||line.includes('[bsearch]')) return 'info';
+  return '';
+}
+function clearLog() {
+  document.getElementById('terminal').innerHTML='';
+  document.getElementById('log-done').style.display='none';
+}
+
+// ── Field panel ───────────────────────────────────────────────────────────────
+function toggleFieldPanel() {
+  fieldPanelCollapsed_ = !fieldPanelCollapsed_;
+  const panel=document.getElementById('field-panel');
+  const btn=panel.querySelector('.collapse-btn');
+  panel.classList.toggle('collapsed', fieldPanelCollapsed_);
+  btn.textContent = fieldPanelCollapsed_ ? '›' : '‹';
+  btn.title = fieldPanelCollapsed_ ? 'Expand' : 'Collapse';
+}
+
+const LS_FIELDS_KEY = 'kibana_scraper_selected_fields';
+
+function _saveFieldsToLS() {
+  try { localStorage.setItem(LS_FIELDS_KEY, JSON.stringify([...dataSelectedFields_])); } catch(e) {}
+}
+
+function _loadFieldsFromLS(available) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_FIELDS_KEY) || 'null');
+    if (Array.isArray(saved) && saved.length) {
+      const fset = new Set(available);
+      // Keep own fields that still exist + all linked fields (they have LINKED_SEP)
+      const valid = saved.filter(f => f.includes(LINKED_SEP) || fset.has(f));
+      if (valid.length) return new Set(valid);
+    }
+  } catch(e) {}
+  return null;
+}
+
+async function loadFields(jobId) {
+  try { dataFields_ = await api.get(`/api/jobs/${jobId}/fields`); }
+  catch(e) { dataFields_ = DEFAULT_FIELDS.slice(); }
+
+  // Load linked job fields
+  try {
+    const gf = await api.get(`/api/jobs/${jobId}/group-fields`);
+    linkedJobFields_ = gf.linked || [];
+  } catch(e) { linkedJobFields_ = []; }
+
+  if (!dataSelectedFields_) {
+    const fromLS = _loadFieldsFromLS(dataFields_);
+    if (fromLS) {
+      dataSelectedFields_ = fromLS;
+    } else {
+      const fset = new Set(dataFields_);
+      const smart = PRIORITY_FIELDS.filter(f => fset.has(f));
+      dataSelectedFields_ = new Set(smart.length ? smart.slice(0,7) : dataFields_.slice(0,7));
+    }
+  }
+  renderFieldPanel();
+}
+
+function renderFieldPanel() {
+  const el = document.getElementById('field-list');
+  if (!dataFields_.length) { el.innerHTML = '<div style="padding:10px;color:var(--tx2);font-size:11px;">No fields</div>'; return; }
+  const q = fieldSearch_.toLowerCase();
+
+  // Own fields
+  const visibleOwn = q ? dataFields_.filter(f => f.toLowerCase().includes(q)) : dataFields_;
+  const ownHtml = visibleOwn.map((f, i) => {
+    const checked = dataSelectedFields_.has(f);
+    return `<div class="field-item ${checked ? 'selected' : ''}">
+      <input type="checkbox" id="fld-${i}" data-field="${esc(f)}" data-linked="0" ${checked ? 'checked' : ''} onchange="toggleField(this)">
+      <label for="fld-${i}" title="${esc(f)}">${esc(f)}</label>
+    </div>`;
+  }).join('');
+
+  // Linked job fields — one section per linked job
+  let linkedHtml = '';
+  for (const lj of linkedJobFields_) {
+    const prefix = lj.label + LINKED_SEP;
+    const visibleLinked = q
+      ? lj.fields.filter(f => f.toLowerCase().includes(q) || lj.label.toLowerCase().includes(q))
+      : lj.fields;
+    if (!visibleLinked.length) continue;
+    const items = visibleLinked.map((f, i) => {
+      const key = prefix + f;
+      const checked = dataSelectedFields_.has(key);
+      const uid = `lfld-${lj.job_id}-${i}`;
+      return `<div class="field-item linked ${checked ? 'selected' : ''}">
+        <input type="checkbox" id="${uid}" data-field="${esc(key)}" data-linked="1" ${checked ? 'checked' : ''} onchange="toggleField(this)">
+        <label for="${uid}" title="${esc(lj.label + ': ' + f)}">${esc(f)}</label>
+      </div>`;
+    }).join('');
+    linkedHtml += `<div class="field-source-hdr"><span class="src-dot"></span>🔗 ${esc(lj.label)}</div>${items}`;
+  }
+
+  el.innerHTML = ownHtml + linkedHtml;
+  if (!ownHtml && !linkedHtml) el.innerHTML = '<div style="padding:10px;color:var(--tx2);font-size:11px;">No match</div>';
+}
+
+function toggleField(cb) {
+  const f=cb.getAttribute('data-field');
+  if (cb.checked) dataSelectedFields_.add(f); else dataSelectedFields_.delete(f);
+  cb.closest('.field-item').classList.toggle('selected', cb.checked);
+  _saveFieldsToLS();
+  if (lastDataRows_) renderDataTable(lastDataRows_);
+}
+
+// ── Table rendering ───────────────────────────────────────────────────────────
+function getFieldValue(row, field, rj) {
+  // Linked field: "SourceLabel\x1Efield_name"
+  if (field.includes(LINKED_SEP)) {
+    const sepIdx = field.indexOf(LINKED_SEP);
+    const srcLabel = field.slice(0, sepIdx);
+    const srcField = field.slice(sepIdx + 1);
+    const linked = (corrDataCache_[String(row.id)] || corrDataCache_[row.id] || []);
+    const match = linked.find(c => c._source_label === srcLabel);
+    if (!match) return '';
+    const lrj = match.raw_json || {};
+    const val = lrj[srcField];
+    let v = Array.isArray(val) ? (val[0] ?? '') : (val ?? '');
+    if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+    return v;
+  }
+  // Own field
+  if (field in DATA_DB_MAP) return DATA_DB_MAP[field](row) ?? '';
+  const val = rj[field];
+  let v = Array.isArray(val) ? (val[0] ?? '') : (val ?? '');
+  if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+  return v;
+}
+
+function errorLevelClass(val) {
+  if (!val) return '';
+  const v=String(val).toUpperCase();
+  if (v.includes('ERROR')||v.includes('CRITICAL')) return ' class="el-error"';
+  if (v.includes('WARN')) return ' class="el-warn"';
+  if (v.includes('INFO')) return ' class="el-info"';
+  if (v.includes('DEBUG')) return ' class="el-debug"';
+  return '';
+}
+
+function httpColor(s) {
+  if (!s) return '';
+  const n=parseInt(s);
+  if (n<300) return 'color:var(--green)';
+  if (n<400) return 'color:var(--blue)';
+  if (n<500) return 'color:var(--orange)';
+  return 'color:var(--red)';
+}
+
+function renderDataTable(rows) {
+  lastDataRows_=rows;
+  const fields=dataSelectedFields_ ? [...dataSelectedFields_] : DEFAULT_FIELDS;
+  const allChecked = rows.length > 0 && rows.every(r => selectedRows_.has(r.id));
+
+  const _sortArrow = f => {
+    if (f !== sortField_) return ' <span style="opacity:.25;font-size:9px;">⇅</span>';
+    return sortDir_ === 'asc'
+      ? ' <span style="color:var(--blue);font-size:10px;">▲</span>'
+      : ' <span style="color:var(--blue);font-size:10px;">▼</span>';
+  };
+  const _thStyle = f => f === sortField_
+    ? 'cursor:pointer;white-space:nowrap;background:rgba(88,166,255,.08);'
+    : 'cursor:pointer;white-space:nowrap;';
+
+  document.getElementById('data-thead').innerHTML =
+    `<tr><th class="col-select"><input type="checkbox" class="row-checkbox" id="select-all-cb" ${allChecked?'checked':''} onchange="selectAll(this.checked)" title="Select all"></th>` +
+    '<th style="width:76px;min-width:76px;">Severity</th>' +
+    fields.map(f => {
+      const fEsc = esc(f);
+      if (f.includes(LINKED_SEP)) {
+        const parts = f.split(LINKED_SEP);
+        return `<th data-v="${fEsc}" style="${_thStyle(f)}" onclick="sortBy(this.dataset.v)" title="${esc(parts[0]+': '+parts[1])}"><span class="linked-col-hdr">[${esc(parts[0])}]</span> ${esc(parts[1])}${_sortArrow(f)}</th>`;
+      }
+      return `<th data-v="${fEsc}" style="${_thStyle(f)}" onclick="sortBy(this.dataset.v)">${esc(f)}${_sortArrow(f)}</th>`;
+    }).join('') +
+    '<th style="width:110px;min-width:110px;text-align:right;">Actions</th></tr>';
+
+  const tbody=document.getElementById('data-tbody');
+  if (!rows.length) {
+    tbody.innerHTML=`<tr><td colspan="${fields.length+3}" style="color:var(--tx2);padding:20px 14px;text-align:center;">No data — run the job first or adjust filters.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML=rows.map(r=>{
+    let rj={};
+    try { rj=r.raw_json ? (typeof r.raw_json==='string' ? JSON.parse(r.raw_json) : r.raw_json) : {}; } catch(e){}
+    const rowCls = r.relevance==='relevant' ? 'relevant-row' : r.relevance==='irrelevant' ? 'irrelevant-row' : '';
+    const sev=sevBadge(r.severity, r.id, !!r.ai_summary);
+    const dataCells=fields.map(f=>{
+      const raw=getFieldValue(r, f, rj);
+      const disp=raw==null ? '' : String(raw);
+      let attr='';
+      if (f==='error_level') attr=errorLevelClass(disp);
+      else if (f==='http_status_code'||f==='status') { const c=httpColor(disp); if (c) attr=` style="${c};font-weight:600;"`; }
+      return `<td${attr} title="${esc(disp)}">${esc(disp.length>90 ? disp.slice(0,90)+'…' : disp)}</td>`;
+    }).join('');
+
+    return `<tr class="${rowCls}" onclick="expandRow(this,${r.id})">
+      <td class="col-select" onclick="event.stopPropagation()">
+        <input type="checkbox" class="row-checkbox" ${selectedRows_.has(r.id)?'checked':''} onchange="toggleSelectRow(${r.id},this)">
+      </td>
+      <td style="width:76px;">${sev}</td>${dataCells}
+      <td class="row-actions" onclick="event.stopPropagation()" style="width:110px;text-align:right;padding-right:8px;">
+        <button class="btn btn-sm mark-relevant-btn" style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);padding:2px 6px;font-size:10px;" onclick="markRow(${r.id},'relevant',this)">✓ Relevant</button>
+        <button class="btn btn-sm mark-irrelevant-btn" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);padding:2px 6px;font-size:10px;margin-left:3px;" onclick="markRow(${r.id},'irrelevant',this)">✗ Irrel.</button>
+      </td>
+    </tr>
+    <tr id="expand-${r.id}" style="display:none;">
+      <td colspan="${fields.length+3}" style="background:var(--bg0);padding:0;border-bottom:1px solid var(--border);">
+        ${buildKibanaDocView(r, rj)}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function expandRow(tr, rowId) {
+  const detail=document.getElementById('expand-'+rowId);
+  if (!detail) return;
+  const open=detail.style.display==='table-row';
+  detail.style.display=open ? 'none' : 'table-row';
+  tr.classList.toggle('expanded-row', !open);
+  // Load correlated records inline when first opened
+  if (!open) {
+    const inlineEl = document.getElementById(`corr-inline-${rowId}`);
+    if (inlineEl && inlineEl.dataset.loaded !== '1') {
+      inlineEl.dataset.loaded = '1';
+      loadCorrInline(rowId, inlineEl);
+    }
+  }
+}
+
+async function loadCorrInline(rowId, el) {
+  try {
+    const results = await api.get(`/api/logs/${rowId}/correlated`);
+    if (!results || !results.length) { el.style.display = 'none'; return; }
+
+    el.style.cssText = '';
+
+    // ── Group by source label ─────────────────────────────────────────────────
+    const bySource = {};
+    for (const r of results) {
+      const lbl = r._source_label || 'Linked';
+      if (!bySource[lbl]) bySource[lbl] = [];
+      let rj = {};
+      try { rj = typeof r.raw_json === 'string' ? JSON.parse(r.raw_json) : (r.raw_json || {}); } catch(e) {}
+      bySource[lbl].push({...r, _rj: rj});
+    }
+
+    function _strVal(v) {
+      if (Array.isArray(v)) v = v[0] ?? '';
+      if (v !== null && typeof v === 'object') return JSON.stringify(v);
+      return String(v ?? '');
+    }
+
+    function _fieldRow(k, v, highlight) {
+      const disp = renderKfValue(_strVal(v));
+      const safeV = esc(_strVal(v));
+      const nameCls = highlight ? 'kf-name' : 'kf-name';
+      const style = highlight ? ' style="background:rgba(255,166,87,.08);"' : '';
+      return `<tr class="kibana-field-row"${style}>
+        <td class="kf-actions">
+          <button class="kf-btn kf-plus" data-v="${safeV}" onclick="filterInValue(this.dataset.v)">+</button>
+          <button class="kf-btn kf-minus" data-v="${safeV}" onclick="filterOutValue(this.dataset.v)">−</button>
+        </td>
+        <td class="${nameCls}">${esc(k)}</td>
+        <td class="kf-value">${disp}</td>
+      </tr>`;
+    }
+
+    el.innerHTML = Object.entries(bySource).map(([label, recs]) => {
+      const keys = (recs[0]._matched_keys || []).map(k => `<span class="corr-key-badge">${esc(k)}</span>`).join(' ');
+
+      if (recs.length === 1) {
+        // Single record — show all fields
+        const r = recs[0];
+        const sev = r.severity ? `<span class="sev sev-${r.severity}">${r.severity}</span>` : '';
+        const rows = Object.entries(r._rj).map(([k,v]) => _fieldRow(k, v, false)).join('');
+        return `<div style="border-top:2px solid rgba(88,166,255,.25);margin-top:2px;">
+          <div style="background:rgba(88,166,255,.07);padding:6px 56px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span class="corr-source-badge">🔗 ${esc(label)}</span>${keys}${sev}
+            <span style="color:var(--tx2);font-size:10px;margin-left:auto;">${r.timestamp||''}</span>
+          </div>
+          <table class="kibana-doc-table"><colgroup><col style="width:56px"><col style="width:180px"><col></colgroup>
+            <tbody>${rows}</tbody></table></div>`;
+      }
+
+      // Multiple records from same source — find common vs differing fields
+      const allKeys = [...new Set(recs.flatMap(r => Object.keys(r._rj)))];
+      const commonKeys = allKeys.filter(k =>
+        recs.every(r => _strVal(r._rj[k]) === _strVal(recs[0]._rj[k]))
+      );
+      const diffKeys = allKeys.filter(k => !commonKeys.includes(k));
+      const commonSet = new Set(commonKeys);
+
+      // Common fields section (shown once)
+      const commonRows = commonKeys.map(k => _fieldRow(k, recs[0]._rj[k], false)).join('');
+      const uid = `corr-common-${rowId}-${label.replace(/\W/g,'_')}`;
+
+      // Per-record diff sections
+      const diffSections = recs.map((r, i) => {
+        const sev = r.severity ? `<span class="sev sev-${r.severity}">${r.severity}</span>` : '';
+        const diffRows = diffKeys.length
+          ? diffKeys.map(k => _fieldRow(k, r._rj[k], true)).join('')
+          : `<tr><td colspan="3" style="padding:6px 12px;color:var(--tx2);font-size:11px;">All fields identical to record above</td></tr>`;
+        return `<div style="border-top:1px solid rgba(88,166,255,.15);margin-left:56px;">
+          <div style="padding:4px 0 4px 0;display:flex;align-items:center;gap:8px;color:var(--tx2);font-size:10px;">
+            <span style="font-weight:600;color:var(--blue);">#${i+1}</span> ${sev}
+            <span>${r.timestamp||''}</span>
+            ${diffKeys.length ? `<span style="color:var(--orange);">${diffKeys.length} field${diffKeys.length>1?'s':''} differ</span>` : ''}
+          </div>
+          <table class="kibana-doc-table"><colgroup><col style="width:56px"><col style="width:180px"><col></colgroup>
+            <tbody>${diffRows}</tbody></table></div>`;
+      }).join('');
+
+      return `<div style="border-top:2px solid rgba(88,166,255,.25);margin-top:2px;">
+        <div style="background:rgba(88,166,255,.07);padding:6px 56px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="corr-source-badge">🔗 ${esc(label)}</span>${keys}
+          <span style="color:var(--tx2);font-size:10px;">${recs.length} records</span>
+          <span style="color:var(--tx2);font-size:10px;margin-left:auto;">${commonKeys.length} shared · ${diffKeys.length} differ</span>
+        </div>
+        ${commonRows ? `
+        <div style="padding:3px 0;">
+          <div style="padding:3px 56px;font-size:10px;color:var(--tx2);display:flex;align-items:center;gap:6px;cursor:pointer;"
+               onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.toggle-arrow').textContent=this.nextElementSibling.style.display===''?'▾':'▸';">
+            <span class="toggle-arrow">▾</span> ${commonKeys.length} fields shared across all ${recs.length} records
+          </div>
+          <div id="${uid}">
+            <table class="kibana-doc-table"><colgroup><col style="width:56px"><col style="width:180px"><col></colgroup>
+              <tbody>${commonRows}</tbody></table>
+          </div>
+        </div>` : ''}
+        ${diffSections}
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    el.style.display = 'none';
+  }
+}
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+async function loadData(jobId, page) {
+  const search   = document.getElementById('data-search')?.value.trim()||'';
+  const fromRaw  = document.getElementById('data-from')?.value||'';
+  const toRaw    = document.getElementById('data-to')?.value||'';
+  const params   = new URLSearchParams({page, per_page: perPage_});
+  if (search)   params.set('search', search);
+  if (regexMode_) params.set('regex', 'true');
+  if (fromRaw)  params.set('from_date', fromRaw.replace('T',' '));
+  if (toRaw)    params.set('to_date', toRaw.replace('T',' '));
+  if (relFilter_) params.set('relevance', relFilter_);
+  params.set('sort_by', sortField_);
+  params.set('sort_dir', sortDir_);
+  if (fieldFilters_.length) params.set('field_filters', JSON.stringify(fieldFilters_));
+  const d=await api.get(`/api/jobs/${jobId}/data?${params}`);
+  const total=d.total||0;
+  const pages=Math.ceil(total/d.per_page)||1;
+  document.getElementById('data-total').innerHTML=
+    `<b>${total.toLocaleString()}</b> records`;
+  document.getElementById('data-page-info').innerHTML=
+    `Page <b>${d.page}</b> / <b>${pages}</b>`;
+  // Keep header rows chip in sync with the currently viewed job
+  const _jName = (jobs.find(j=>j.id===jobId)||{}).name || null;
+  _updateRowsChip(total, _jName);
+  renderDataTable(d.rows);
+  // If any linked fields are selected, batch-fetch correlated data for visible rows
+  const hasLinked = dataSelectedFields_ && [...dataSelectedFields_].some(f => f.includes(LINKED_SEP));
+  if (hasLinked && d.rows && d.rows.length) {
+    const ids = d.rows.map(r => r.id);
+    corrDataCache_ = {};  // clear cache for new page
+    try {
+      const batch = await api.post('/api/logs/correlated-batch', {ids});
+      corrDataCache_ = batch || {};
+      renderDataTable(d.rows);  // re-render with correlated data populated
+    } catch(e) { /* ignore, table already rendered without linked values */ }
+  }
+}
+
+function applyDataFilter() { dataPage_=1; loadData(selJobId, 1); }
+function clearDataFilter() {
+  document.getElementById('data-search').value='';
+  document.getElementById('data-from').value='';
+  document.getElementById('data-to').value='';
+  dataPage_=1; loadData(selJobId, 1);
+}
+function dataPage(delta) { dataPage_=Math.max(1, dataPage_+delta); clearSelection(); loadData(selJobId, dataPage_); }
+
+// ── Relevance filter ──────────────────────────────────────────────────────────
+function setRelFilter(val) {
+  relFilter_=val;
+  const map={all:{val:'',cls:'active'}, relevant:{val:'relevant',cls:'active-green'}, irrelevant:{val:'irrelevant',cls:'active-red'}, unchecked:{val:'unchecked',cls:'active-orange'}};
+  Object.entries(map).forEach(([k,{val:v,cls}])=>{
+    const el=document.getElementById('rpill-'+k);
+    if (!el) return;
+    el.className='rel-pill';
+    if (val===v) el.className+=' '+cls;
+  });
+  dataPage_=1; loadData(selJobId, 1);
+}
+
+// ── Severity badges ───────────────────────────────────────────────────────────
+const SEV_LABEL={critical:'CRITICAL',high:'HIGH',medium:'MEDIUM',low:'LOW',info:'INFO'};
+
+function sevBadge(sev, rowId, hasSummary) {
+  const cls=sev?`sev-${sev}`:'sev-unchecked';
+  const label=sev?(SEV_LABEL[sev]||sev.toUpperCase()):'·';
+  const click=hasSummary?`onclick="event.stopPropagation();openCodeRefs(${rowId})"`:
+                         `onclick="event.stopPropagation();"`;
+  return `<span class="sev ${cls}" ${click} title="${hasSummary?'Click for AI summary':''}">${label}</span>`;
+}
+
+// ── Code refs modal ───────────────────────────────────────────────────────────
+function openCodeRefs(rowId) {
+  const row=(lastDataRows_||[]).find(r=>r.id===rowId);
+  if (!row) return;
+  const sev=row.severity||'info';
+  document.getElementById('cr-title').textContent='AI Analysis — Log #'+rowId;
+  document.getElementById('cr-rel-label').textContent =
+    row.relevance==='relevant' ? '✓ Checkout / payment related' :
+    row.relevance==='irrelevant' ? '✗ Not related to checkout' : '';
+  document.getElementById('cr-severity-badge').innerHTML=sevBadge(sev, rowId, false);
+  document.getElementById('cr-summary').textContent=row.ai_summary||'No summary available.';
+
+  let refs=row.code_refs;
+  if (typeof refs==='string'){try{refs=JSON.parse(refs);}catch(e){refs=[];}}
+  const refsEl=document.getElementById('cr-refs');
+  if (!refs||!refs.length) {
+    refsEl.innerHTML=row.relevance==='relevant'
+      ?`<div style="color:var(--tx2);font-size:12px;display:flex;align-items:center;gap:8px;">
+          No GitHub code references found.
+          <button class="btn btn-ghost btn-sm" onclick="fetchCodeRefs(${rowId})">🔍 Search GitHub</button>
+        </div>`
+      :'<div style="color:var(--tx2);font-size:12px;">Not checkout-related — no code search performed.</div>';
+  } else {
+    refsEl.innerHTML='<div class="coderef-section-label" style="margin-bottom:8px;">Code References</div>'+
+      refs.map(r=>`<div class="coderef-item">
+        <a href="${esc(r.url)}" target="_blank">📄 ${esc(r.path)}</a>
+        <div class="coderef-repo">${esc(r.repo)}</div>
+      </div>`).join('');
+  }
+  document.getElementById('coderef-modal').classList.add('open');
+}
+
+async function fetchCodeRefs(rowId) {
+  const settings=await api.get('/api/settings');
+  if (!settings.github_token_set) {
+    document.getElementById('coderef-modal').classList.remove('open');
+    openSettings();
+  }
+}
+
+// ── AI Analysis with toast ────────────────────────────────────────────────────
+let toastTimer_=null;
+function showToast(icon, title, body, pct) {
+  const t=document.getElementById('toast');
+  document.getElementById('toast-icon').textContent=icon;
+  document.getElementById('toast-title').textContent=title;
+  document.getElementById('toast-body').textContent=body;
+  document.getElementById('toast-fill').style.width=(pct||0)+'%';
+  t.classList.add('visible');
+  if (toastTimer_) clearTimeout(toastTimer_);
+}
+function hideToast(delay=3000) {
+  toastTimer_=setTimeout(()=>document.getElementById('toast').classList.remove('visible'), delay);
+}
+
+function startAnalysis() {
+  if (!selJobId) return;
+  const btn=document.getElementById('btn-analyze');
+  btn.disabled=true; btn.textContent='⟳ Analyzing…';
+  const pbar=document.getElementById('analyze-pbar');
+  const fill=document.getElementById('analyze-bar-fill');
+  const statusTxt=document.getElementById('analyze-status');
+  pbar.classList.add('active'); fill.style.width='0%';
+  statusTxt.style.display='block'; statusTxt.textContent='Starting…';
+  showToast('🤖','Analyzing logs…','Sending to Claude Haiku', 0);
+
+  const _bjId = bgJobStart('🤖', 'Analyze with AI');
+  const es=new EventSource(`/api/jobs/${selJobId}/analyze/stream?limit=30`);
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if (d.type==='progress') {
+      const pct=d.total?Math.round(d.done/d.total*100):0;
+      fill.style.width=pct+'%';
+      statusTxt.textContent=`${d.done}/${d.total}`;
+      showToast('🤖','Analyzing…',`${d.done} of ${d.total} logs processed`, pct);
+      bgJobProgress(_bjId, pct, `${d.done} / ${d.total} logs`);
+    } else if (d.type==='done') {
+      es.close();
+      btn.disabled=false; btn.textContent='🤖 Analyze with AI';
+      fill.style.width='100%';
+      pbar.classList.remove('active');
+      const msg=d.analyzed===0
+        ?'All logs already analyzed'
+        :`${d.analyzed} analyzed · ${d.relevant} checkout-related`;
+      statusTxt.textContent=msg;
+      showToast('✓','Analysis complete', msg, 100);
+      hideToast(4000);
+      bgJobDone(_bjId, msg);
+      loadData(selJobId, dataPage_);
+    }
+  };
+  es.onerror=()=>{
+    es.close();
+    btn.disabled=false; btn.textContent='🤖 Analyze with AI';
+    statusTxt.textContent='Error — check console';
+    pbar.classList.remove('active');
+    showToast('✗','Analysis error','Check the server logs', 0);
+    hideToast(5000);
+    bgJobError(_bjId, 'Server error — check logs');
+  };
+}
+
+// ── Background Jobs tracker ───────────────────────────────────────────────────
+let bgJobs_ = [];        // [{id, icon, name, pct, msg, status, ts}]
+let bgJobSeq_ = 0;
+let bgPanelOpen_ = false;
+
+function bgJobStart(icon, name) {
+  const id = ++bgJobSeq_;
+  bgJobs_.push({id, icon, name, pct: 0, msg: 'Starting…', status: 'running', ts: Date.now()});
+  _renderBgPanel();
+  return id;
+}
+
+function bgJobProgress(id, pct, msg) {
+  const j = bgJobs_.find(x => x.id === id);
+  if (j) { j.pct = pct; j.msg = msg; _renderBgPanel(); }
+}
+
+function bgJobDone(id, msg) {
+  const j = bgJobs_.find(x => x.id === id);
+  if (j) { j.pct = 100; j.msg = msg; j.status = 'done'; _renderBgPanel(); }
+  // Auto-clear after 30s
+  setTimeout(() => { bgJobs_ = bgJobs_.filter(x => x.id !== id); _renderBgPanel(); }, 30000);
+}
+
+function bgJobError(id, msg) {
+  const j = bgJobs_.find(x => x.id === id);
+  if (j) { j.msg = msg; j.status = 'error'; _renderBgPanel(); }
+}
+
+function clearFinishedJobs() {
+  bgJobs_ = bgJobs_.filter(j => j.status === 'running');
+  _renderBgPanel();
+}
+
+function toggleBgPanel() {
+  bgPanelOpen_ = !bgPanelOpen_;
+  document.getElementById('bgjobs-panel').style.display = bgPanelOpen_ ? 'block' : 'none';
+}
+
+// Close panel when clicking outside
+document.addEventListener('click', e => {
+  if (bgPanelOpen_ && !e.target.closest('#bgjobs-btn') && !e.target.closest('#bgjobs-panel')) {
+    bgPanelOpen_ = false;
+    document.getElementById('bgjobs-panel').style.display = 'none';
+  }
+});
+
+function _renderBgPanel() {
+  const running = bgJobs_.filter(j => j.status === 'running');
+  const btn     = document.getElementById('bgjobs-btn');
+  const icon    = document.getElementById('bgjobs-icon');
+  const label   = document.getElementById('bgjobs-label');
+  const count   = document.getElementById('bgjobs-count');
+  const list    = document.getElementById('bgjobs-list');
+
+  // Update button state
+  btn.classList.toggle('has-running', running.length > 0);
+  btn.classList.toggle('has-error',   !running.length && bgJobs_.some(j => j.status === 'error'));
+
+  if (running.length > 0) {
+    icon.textContent = '⚙';
+    icon.className = 'bj-spinner';
+    label.textContent = running.length === 1 ? running[0].name.slice(0,18) : `${running.length} running`;
+    count.style.display = 'inline';
+    count.textContent = running.length;
+  } else {
+    icon.textContent = '⚙';
+    icon.className = '';
+    label.textContent = 'Jobs';
+    count.style.display = bgJobs_.length ? 'inline' : 'none';
+    count.textContent = bgJobs_.length;
+    if (count.style.display !== 'none') count.style.background = bgJobs_.some(j=>j.status==='error') ? 'var(--red)' : 'var(--bg3)';
+  }
+
+  // Render list
+  if (!bgJobs_.length) {
+    list.innerHTML = '<div class="bgjobs-empty">No background jobs yet</div>';
+    return;
+  }
+  list.innerHTML = [...bgJobs_].reverse().map(j => `
+    <div class="bgjob-item">
+      <div class="bgjob-row1">
+        <span class="bgjob-icon">${j.icon}</span>
+        <span class="bgjob-name">${esc(j.name)}</span>
+        <span class="bgjob-status ${j.status}">${j.status}</span>
+      </div>
+      <div class="bgjob-msg">${esc(j.msg)}</div>
+      <div class="bgjob-bar"><div class="bgjob-bar-fill ${j.status}" style="width:${j.pct}%;"></div></div>
+    </div>
+  `).join('');
+}
+
+// ── Auto-Classify ─────────────────────────────────────────────────────────────
+function startAutoClassify() {
+  if (!selJobId) return;
+  const btn  = document.getElementById('btn-autoclassify');
+  const pbar = document.getElementById('autoclassify-pbar');
+  const fill = document.getElementById('autoclassify-bar-fill');
+  btn.disabled = true; btn.textContent = '⟳ Classifying…';
+  pbar.classList.add('active'); fill.style.width = '0%';
+  showToast('⚡', 'Auto-Classify', 'Building pattern lookup…', 0);
+
+  const _bjId2 = bgJobStart('⚡', 'Auto-Classify');
+  const es = new EventSource(`/api/jobs/${selJobId}/auto-classify/stream`);
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'lookup_built') {
+      showToast('⚡', 'Auto-Classify', `${d.patterns} patterns learned`, 5);
+      bgJobProgress(_bjId2, 5, `${d.patterns} patterns learned`);
+    } else if (d.type === 'progress') {
+      const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+      fill.style.width = pct + '%';
+      showToast('⚡', 'Auto-Classify', `${d.done} / ${d.total} checked`, pct);
+      bgJobProgress(_bjId2, pct, `${d.done} / ${d.total} records`);
+    } else if (d.type === 'done') {
+      es.close();
+      btn.disabled = false; btn.textContent = '⚡ Auto-Classify';
+      fill.style.width = '100%';
+      pbar.classList.remove('active');
+      const msg = d.classified === 0
+        ? (d.message || 'Nothing to classify')
+        : `Classified ${d.classified} · Skipped ${d.skipped} (no match)`;
+      showToast('✓', 'Auto-Classify done', msg, 100);
+      hideToast(4000);
+      bgJobDone(_bjId2, msg);
+      loadData(selJobId, dataPage_);
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    btn.disabled = false; btn.textContent = '⚡ Auto-Classify';
+    pbar.classList.remove('active');
+    showToast('✗', 'Auto-Classify error', 'Check server logs', 0);
+    hideToast(5000);
+    bgJobError(_bjId2, 'Server error');
+  };
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function openSettings() {
+  const s=await api.get('/api/settings');
+  document.getElementById('ak-status').textContent=s.anthropic_key_set?'✓ set':'';
+  document.getElementById('gh-status').textContent=s.github_token_set?'✓ set':'';
+  document.getElementById('btn-settings').style.borderColor=!s.anthropic_key_set?'var(--orange)':'';
+  document.getElementById('gh-modal').classList.add('open');
+}
+
+async function saveApiKeys() {
+  const ak=document.getElementById('anthropic-key-input').value.trim();
+  const gh=document.getElementById('gh-token-input').value.trim();
+  if (!ak&&!gh){document.getElementById('gh-modal').classList.remove('open');return;}
+  await api.post('/api/settings/keys',{anthropic_key:ak,github_token:gh});
+  document.getElementById('gh-modal').classList.remove('open');
+  document.getElementById('anthropic-key-input').value='';
+  document.getElementById('gh-token-input').value='';
+  document.getElementById('btn-settings').style.borderColor='';
+}
+
+// ── Config form ───────────────────────────────────────────────────────────────
+function renderConfigForm(job) {
+  document.getElementById('config-form').innerHTML=`
+    <div class="config-section">
+      <div class="form-grid full"><div class="form-field">
+        <label class="form-label">Name</label>
+        <input class="form-input" id="cf-name" value="${esc(job.name)}"/>
+      </div></div>
+      <div class="form-grid full"><div class="form-field">
+        <label class="form-label">Kibana URL</label>
+        <input class="form-input" id="cf-url" value="${esc(job.kibana_url)}"/>
+      </div></div>
+      <div class="form-grid">
+        <div class="form-field">
+          <label class="form-label">Time Range</label>
+          <select class="form-input" id="cf-time">${timeOptions(job.time_range)}</select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Daily Hour (UTC)</label>
+          <input class="form-input" id="cf-hour" type="number" value="${job.schedule_hour}" min="0" max="23"/>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-field">
+          <label class="form-label">Chunk Window <span style="font-size:10px;color:var(--tx2);">splits large time ranges</span></label>
+          <select class="form-input" id="cf-chunk" onchange="updateChunkPreview(${job.id})">
+            ${chunkOptions(job.chunk_hours||0)}
+          </select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Enabled</label>
+          <select class="form-input" id="cf-enabled">
+            <option value="true" ${job.enabled?'selected':''}>Yes — run daily</option>
+            <option value="false" ${!job.enabled?'selected':''}>No — manual only</option>
+          </select>
+        </div>
+      </div>
+      <div id="chunk-preview" style="font-size:11px;color:var(--tx2);padding:2px 0 6px 0;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+        <button class="btn btn-blue" onclick="saveConfig(${job.id})">Save Changes</button>
+      </div>
+      <div class="config-danger">
+        <div class="config-danger-text">
+          <b>Clear Data</b>
+          Delete all log records. Job config is kept.
+        </div>
+        <button class="btn btn-ghost btn-sm" style="border-color:var(--orange);color:var(--orange);" onclick="clearJobData(${job.id})">🗑 Clear Data</button>
+      </div>
+      <div class="config-danger" style="margin-top:8px;">
+        <div class="config-danger-text">
+          <b>Delete Job</b>
+          Permanently delete this job and all its data.
+        </div>
+        <button class="btn btn-red btn-sm" onclick="deleteJob(${job.id})">✕ Delete Job</button>
+      </div>
+    </div>`;
+}
+
+// ── Collection config panel ───────────────────────────────────────────────────
+function renderConfigFormCollection(coll) {
+  if (!coll) return;
+  const keysHtml = (coll.corr_keys||[]).map(k=>
+    `<span class="key-chip" style="font-size:11px;">${esc(k)}</span>`
+  ).join('');
+  const srcHtml = (coll.sources||[]).map((s,i)=>
+    `<div class="source-row" style="margin-bottom:4px;">
+       <span class="form-input src-label" style="background:transparent;border-color:transparent;pointer-events:none;">${esc(s.label)}</span>
+       <span class="form-input src-url"   style="background:transparent;border-color:transparent;pointer-events:none;font-size:10px;overflow:hidden;text-overflow:ellipsis;">${esc(s.kibana_url)}</span>
+     </div>`
+  ).join('');
+  document.getElementById('config-form').innerHTML=`
+    <div class="config-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span style="font-size:13px;font-weight:600;">${esc(coll.name)}</span>
+        <button class="btn btn-ghost btn-sm" onclick="openEditJob()">✏ Edit</button>
+      </div>
+      <div style="font-size:11px;color:var(--tx2);margin-bottom:8px;">${esc(coll.time_range)} · ${coll.chunk_hours>0?coll.chunk_hours+'h chunks':'single pass'} · Daily @${coll.schedule_hour}:00 UTC</div>
+      <div style="font-size:11px;font-weight:600;color:var(--tx2);margin-bottom:4px;">SOURCES</div>
+      ${srcHtml}
+      ${keysHtml ? `<div style="font-size:11px;font-weight:600;color:var(--tx2);margin:8px 0 4px;">CORRELATION KEYS</div><div style="display:flex;flex-wrap:wrap;gap:4px;">${keysHtml}</div>` : ''}
+      <div class="config-danger" style="margin-top:14px;">
+        <div class="config-danger-text"><b>Clear Data</b> Delete all log records. Collection config is kept.</div>
+        <button class="btn btn-ghost btn-sm" style="border-color:var(--orange);color:var(--orange);" onclick="clearCollectionData(${coll.id})">🗑 Clear Data</button>
+      </div>
+      <div class="config-danger" style="margin-top:8px;">
+        <div class="config-danger-text"><b>Delete Collection</b> Permanently delete this collection and all its data.</div>
+        <button class="btn btn-red btn-sm" onclick="deleteCollection(${coll.id})">✕ Delete</button>
+      </div>
+    </div>`;
+}
+
+async function saveConfig(id) {
+  await api.put(`/api/jobs/${id}`, {
+    name:          document.getElementById('cf-name').value,
+    kibana_url:    document.getElementById('cf-url').value,
+    time_range:    document.getElementById('cf-time').value,
+    max_pages:     9999,
+    schedule_hour: parseInt(document.getElementById('cf-hour').value),
+    chunk_hours:   parseInt(document.getElementById('cf-chunk').value)||0,
+    enabled:       document.getElementById('cf-enabled').value==='true',
+  });
+  await loadJobs();
+  renderConfigForm(jobs.find(j=>j.id===id));
+}
+
+async function deleteJob(id) {
+  const job = jobs.find(j => j.id === id);
+  const name = job ? job.name : `Job ${id}`;
+  // Count records first
+  let rowCount = '?';
+  try {
+    const d = await api.get(`/api/jobs/${id}/data?page=1&per_page=1`);
+    rowCount = (d.total || 0).toLocaleString();
+  } catch(e) {}
+
+  if (!confirm(`Delete "${name}"?\n\nThis will permanently remove:\n• ${rowCount} log records\n• All run history\n• Group memberships & correlation keys\n• Pre-computed correlations\n\nThis cannot be undone.`)) return;
+
+  showToast('🗑', 'Deleting…', `Removing all data for "${name}"`, 0);
+  const _bjId = bgJobStart('🗑', `Delete: ${name}`);
+  try {
+    await api.del(`/api/jobs/${id}`);
+    bgJobDone(_bjId, `"${name}" deleted`);
+    showToast('✓', 'Deleted', `"${name}" and all its data removed`, 100);
+    hideToast(3000);
+  } catch(e) {
+    bgJobError(_bjId, 'Delete failed');
+    showToast('✗', 'Delete failed', String(e), 0);
+    hideToast(5000);
+    return;
+  }
+  selJobId = null;
+  document.getElementById('job-detail').style.display = 'none';
+  document.getElementById('welcome').style.display = 'flex';
+  await loadJobs();
+  await loadStats();
+}
+
+async function clearJobData(id) {
+  const job = jobs.find(j => j.id === id);
+  const name = job ? job.name : `Job ${id}`;
+  let rowCount = '?';
+  try {
+    const d = await api.get(`/api/jobs/${id}/data?page=1&per_page=1`);
+    rowCount = (d.total || 0).toLocaleString();
+  } catch(e) {}
+
+  if (!confirm(`Clear data for "${name}"?\n\nThis will permanently remove:\n• ${rowCount} log records\n• All run history\n• Pre-computed correlations\n\nJob config will be kept — you can re-scrape afterwards.\n\nContinue?`)) return;
+
+  showToast('🗑', 'Clearing…', `Deleting logs for "${name}"`, 0);
+  const _bjId = bgJobStart('🗑', `Clear: ${name}`);
+  try {
+    await api.del(`/api/jobs/${id}/data`);
+    bgJobDone(_bjId, `"${name}" data cleared`);
+    showToast('✓', 'Cleared', `All log data for "${name}" removed. Job config kept.`, 100);
+    hideToast(3000);
+  } catch(e) {
+    bgJobError(_bjId, 'Clear failed');
+    showToast('✗', 'Clear failed', String(e), 0);
+    hideToast(5000);
+    return;
+  }
+  await loadJobs();
+  await loadStats();
+  const updJob = jobs.find(j => j.id === id);
+  if (updJob) renderConfigForm(updJob);
+  // Force-refresh the data pane so it shows 0 records immediately
+  if (selJobId === id) {
+    dataPage_ = 1;
+    dataSelectedFields_ = new Set();
+    lastDataRows_ = [];
+    selectedRows_.clear();
+    await loadData(id, 1);
+  }
+}
+
+async function clearCollectionData(id) {
+  const coll = collections_.find(c => c.id === id);
+  const name = coll ? coll.name : `Collection ${id}`;
+  const srcCount = coll ? (coll.sources||[]).length : '?';
+
+  if (!confirm(`Clear data for collection "${name}"?\n\nThis will permanently remove all log records and run history for ${srcCount} source(s).\n\nCollection config will be kept — you can re-scrape afterwards.\n\nContinue?`)) return;
+
+  showToast('🗑', 'Clearing…', `Deleting all logs for "${name}"`, 0);
+  const _bjId = bgJobStart('🗑', `Clear: ${name}`);
+  try {
+    await api.del(`/api/collections/${id}/data`);
+    bgJobDone(_bjId, `"${name}" data cleared`);
+    showToast('✓', 'Cleared', `All log data for "${name}" removed. Collection config kept.`, 100);
+    hideToast(3000);
+  } catch(e) {
+    bgJobError(_bjId, 'Clear failed');
+    showToast('✗', 'Clear failed', String(e), 0);
+    hideToast(5000);
+    return;
+  }
+  await loadJobs();
+  await loadCollections();
+  await loadStats();
+  const updColl = collections_.find(c => c.id === id);
+  if (updColl) renderConfigFormCollection(updColl);
+  // Force-refresh data pane if we're currently viewing one of the cleared sources
+  if (selJobId) {
+    const coll2 = collections_.find(c => c.id === id);
+    const srcJobIds = (coll2?.sources || []).map(s => s.job_id).filter(Boolean);
+    if (srcJobIds.includes(selJobId)) {
+      dataPage_ = 1;
+      dataSelectedFields_ = new Set();
+      lastDataRows_ = [];
+      selectedRows_.clear();
+      await loadData(selJobId, 1);
+    }
+  }
+}
+
+// ── Add / Edit modal ──────────────────────────────────────────────────────────
+// ── Collection modal state ────────────────────────────────────────────────────
+let editCollId = null;   // null = add mode
+
+function _modalSources() { return document.getElementById('f-sources'); }
+function _modalKeys()    { return document.getElementById('f-keys'); }
+
+function addSourceRow(label='', url='') {
+  const div = document.createElement('div');
+  div.className = 'source-row';
+  div.innerHTML = `
+    <input class="form-input src-label" placeholder="Label (e.g. Syslog)" value="${esc(label)}" />
+    <input class="form-input src-url"   placeholder="https://kibana.bigcommerce.net/goto/…" value="${esc(url)}" />
+    <button class="src-del" onclick="this.closest('.source-row').remove()" title="Remove">✕</button>`;
+  _modalSources().appendChild(div);
+}
+
+function addKeyRow(value='') {
+  // If value provided add chip directly; otherwise show inline input
+  if (value) { _addKeyChip(value); return; }
+  // Check if input already open
+  if (document.getElementById('key-input-tmp')) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'key-input-row';
+  wrap.id = 'key-input-tmp';
+  wrap.innerHTML = `<input class="form-input" id="key-input-val" placeholder="field name, e.g. request_id" style="width:200px;" />
+    <button class="btn btn-ghost btn-sm" onclick="_commitKey()">Add</button>
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('key-input-tmp').remove()">✕</button>`;
+  _modalKeys().appendChild(wrap);
+  setTimeout(()=>document.getElementById('key-input-val')?.focus(), 50);
+  document.getElementById('key-input-val').onkeydown = e => { if(e.key==='Enter'){e.preventDefault();_commitKey();} };
+}
+
+function _commitKey() {
+  const v = (document.getElementById('key-input-val')?.value||'').trim();
+  document.getElementById('key-input-tmp')?.remove();
+  if (v) _addKeyChip(v);
+}
+
+function _addKeyChip(value) {
+  // Avoid duplicates
+  const existing = [..._modalKeys().querySelectorAll('.key-chip')].map(c=>c.dataset.v);
+  if (existing.includes(value)) return;
+  const chip = document.createElement('span');
+  chip.className = 'key-chip'; chip.dataset.v = value;
+  chip.innerHTML = `${esc(value)}<button onclick="this.parentElement.remove()" title="Remove">✕</button>`;
+  _modalKeys().appendChild(chip);
+}
+
+function _getModalSources() {
+  return [..._modalSources().querySelectorAll('.source-row')].map(row => ({
+    label:      row.querySelector('.src-label').value.trim(),
+    kibana_url: row.querySelector('.src-url').value.trim(),
+  })).filter(s => s.label && s.kibana_url);
+}
+
+function _getModalKeys() {
+  return [..._modalKeys().querySelectorAll('.key-chip')].map(c=>c.dataset.v);
+}
+
+function _resetModal() {
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-time').value = 'Last 7 days';
+  document.getElementById('f-hour').value = '2';
+  document.getElementById('f-chunk').value = '0';
+  document.getElementById('f-enabled').value = 'true';
+  _modalSources().innerHTML = '';
+  _modalKeys().innerHTML = '';
+}
+
+function openAddJob() {
+  editCollId = null;
+  document.getElementById('modal-title').textContent = 'Add Job';
+  document.getElementById('modal-save').textContent = 'Save Job';
+  _resetModal();
+  addSourceRow();   // start with one empty source row
+  document.getElementById('modal').classList.add('open');
+}
+
+function openEditJob() {
+  // Edit the currently selected collection
+  const coll = collections_.find(c => c.id === selCollId);
+  if (!coll) return;
+  editCollId = coll.id;
+  document.getElementById('modal-title').textContent = 'Edit Job';
+  document.getElementById('modal-save').textContent = 'Save Changes';
+  _resetModal();
+  document.getElementById('f-name').value = coll.name;
+  document.getElementById('f-time').value = coll.time_range || 'Last 7 days';
+  document.getElementById('f-hour').value = coll.schedule_hour ?? 2;
+  document.getElementById('f-chunk').value = String(coll.chunk_hours || 0);
+  document.getElementById('f-enabled').value = coll.enabled ? 'true' : 'false';
+  (coll.sources || []).forEach(s => addSourceRow(s.label, s.kibana_url));
+  (coll.corr_keys || []).forEach(k => _addKeyChip(k));
+  if (!coll.sources?.length) addSourceRow();
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+async function saveCollection() {
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { alert('Collection name is required.'); return; }
+  const sources = _getModalSources();
+  if (!sources.length) { alert('Add at least one log source.'); return; }
+  const payload = {
+    name,
+    time_range:    document.getElementById('f-time').value,
+    chunk_hours:   parseInt(document.getElementById('f-chunk').value)||0,
+    schedule_hour: Math.min(Math.max(parseInt(document.getElementById('f-hour').value)||2,0),23),
+    enabled:       document.getElementById('f-enabled').value==='true',
+    sources,
+    corr_keys: _getModalKeys(),
+  };
+  try {
+    let newId = editCollId;
+    if (editCollId) {
+      await api.put(`/api/collections/${editCollId}`, payload);
+    } else {
+      const r = await api.post('/api/collections', payload);
+      if (r.detail) { alert('Error: '+JSON.stringify(r.detail)); return; }
+      newId = r.id;
+    }
+    closeModal();
+    await loadCollections();
+    if (newId) selectCollection(newId);
+  } catch(e) { alert('Save failed: '+e); }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function timeAgo(dt){const d=Math.floor((Date.now()-new Date(dt+'Z'))/1000);if(d<60)return`${d}s ago`;if(d<3600)return`${Math.floor(d/60)}m ago`;if(d<86400)return`${Math.floor(d/3600)}h ago`;return`${Math.floor(d/86400)}d ago`;}
+function fmtDate(dt){return new Date(dt+'Z').toLocaleString();}
+function elapsed(a,b){const s=Math.round((new Date(b+'Z')-new Date(a+'Z'))/1000);if(s<60)return`${s}s`;return`${Math.floor(s/60)}m ${s%60}s`;}
+function timeOptions(sel){return['Last 15 minutes','Last 1 hour','Last 24 hours','Last 7 days','Last 30 days','Last 90 days','Last 1 year'].map(o=>`<option ${o===sel?'selected':''}>${o}</option>`).join('');}
+
+function chunkOptions(sel){
+  const opts=[['0','Disabled (single pass)'],['1','1h per chunk'],['2','2h per chunk'],['4','4h per chunk'],['6','6h per chunk'],['12','12h per chunk'],['24','24h per chunk'],['48','48h per chunk']];
+  return opts.map(([v,l])=>`<option value="${v}" ${String(sel)===v?'selected':''}>${l}</option>`).join('');
+}
+
+async function updateChunkPreview(jobId) {
+  const ch = parseInt(document.getElementById('cf-chunk')?.value)||0;
+  const el = document.getElementById('chunk-preview');
+  if (!el) return;
+  if (ch === 0) { el.textContent=''; return; }
+  try {
+    // Use current UI time_range for preview
+    const tr = document.getElementById('cf-time')?.value || 'Last 7 days';
+    const d = await api.get(`/api/jobs/${jobId}/chunks/preview`);
+    // Re-calculate locally for instant feedback
+    const trHours = {'Last 15 minutes':0.25,'Last 1 hour':1,'Last 24 hours':24,'Last 7 days':168,'Last 30 days':720,'Last 90 days':2160,'Last 1 year':8760};
+    const total = trHours[tr] || 168;
+    const n = Math.ceil(total / ch);
+    el.innerHTML = `⏱ ${n} chunks × ${ch}h — full scan will run <b>${n} browser sessions</b> sequentially`;
+  } catch(e) { el.textContent=''; }
+}
+
+const NAME_HINTS=[['syslog','Syslog'],['nginx','Nginx'],['checkout','Checkout'],['payment','Payment'],['cart','Cart'],['order','Orders'],['error','Errors'],['auth','Auth'],['api','API'],['coupon','Coupon']];
+function suggestName(url){if(!url)return'';const low=url.toLowerCase();for(const[kw,name]of NAME_HINTS)if(low.includes(kw))return name;try{return new URL(url).hostname.split('.')[0];}catch(e){}return'';}
+function autoFillName(url){const el=document.getElementById('f-name');if(!el.value.trim())el.value=suggestName(url);}
+
+// ── Refresh ───────────────────────────────────────────────────────────────────
+function refreshData() {
+  if (selJobId) loadData(selJobId, dataPage_);
+}
+
+// ── Field search ──────────────────────────────────────────────────────────────
+function filterFields(val) {
+  fieldSearch_ = val.toLowerCase();
+  renderFieldPanel();
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+function sortBy(field) {
+  // Linked fields (cross-job) can't be sorted server-side — ignore
+  if (field.includes(LINKED_SEP)) return;
+  if (sortField_ === field) {
+    sortDir_ = sortDir_ === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortField_ = field;
+    sortDir_ = 'desc';
+  }
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// ── Regex toggle ──────────────────────────────────────────────────────────────
+function toggleRegex() {
+  regexMode_ = !regexMode_;
+  const btn = document.getElementById('regex-toggle');
+  if (btn) btn.classList.toggle('active', regexMode_);
+  const inp = document.getElementById('data-search');
+  if (inp) inp.placeholder = regexMode_ ? 'Regex pattern (e.g. Error.*timeout)…' : 'Search message / URI / store_id…';
+}
+
+// ── Per-page selector ─────────────────────────────────────────────────────────
+function setPerPage(n) {
+  perPage_ = n; dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// ── Bulk row selection ────────────────────────────────────────────────────────
+function toggleSelectRow(id, cb) {
+  if (cb.checked) selectedRows_.add(id); else selectedRows_.delete(id);
+  updateBulkBar();
+  // Sync select-all checkbox state
+  const allCb = document.getElementById('select-all-cb');
+  if (allCb && lastDataRows_) {
+    allCb.checked = lastDataRows_.length > 0 && lastDataRows_.every(r => selectedRows_.has(r.id));
+    allCb.indeterminate = !allCb.checked && selectedRows_.size > 0;
+  }
+}
+
+function selectAll(checked) {
+  if (!lastDataRows_) return;
+  lastDataRows_.forEach(r => { if (checked) selectedRows_.add(r.id); else selectedRows_.delete(r.id); });
+  // Refresh checkboxes in DOM
+  document.querySelectorAll('input.row-checkbox:not(#select-all-cb)').forEach(cb => { cb.checked = checked; });
+  const allCb = document.getElementById('select-all-cb');
+  if (allCb) { allCb.checked = checked; allCb.indeterminate = false; }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  const num = document.getElementById('bulk-count-num');
+  if (!bar) return;
+  if (selectedRows_.size > 0) {
+    bar.classList.add('visible');
+    if (num) num.textContent = selectedRows_.size;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function clearSelection() {
+  selectedRows_.clear();
+  document.querySelectorAll('input.row-checkbox').forEach(cb => { cb.checked = false; cb.indeterminate = false; });
+  updateBulkBar();
+}
+
+async function bulkMarkSelected(relevance) {
+  if (!selectedRows_.size) return;
+  const ids = [...selectedRows_];
+  await api.post('/api/logs/mark-bulk', { ids, relevance, severity: 'info' });
+  showToast('✓', `Marked ${ids.length} records as ${relevance}`, '', 100);
+  hideToast(3000);
+  clearSelection();
+  loadData(selJobId, dataPage_);
+}
+
+// ── Mark row ──────────────────────────────────────────────────────────────────
+async function markRow(rowId, relevance, btn) {
+  btn.disabled = true;
+  await api.post(`/api/logs/${rowId}/mark`, { relevance, severity: 'info' });
+  // Update local cache
+  const row = (lastDataRows_ || []).find(r => r.id === rowId);
+  if (row) row.relevance = relevance;
+
+  // Find similar records and offer bulk action (both directions)
+  const row2 = (lastDataRows_ || []).find(r => r.id === rowId);
+  let message = '';
+  if (row2) {
+    let rj = {};
+    try { rj = typeof row2.raw_json === 'string' ? JSON.parse(row2.raw_json) : (row2.raw_json || {}); } catch(e) {}
+    const m = rj.message;
+    message = Array.isArray(m) ? (m[0] || '') : (m || '');
+  }
+  if (message) {
+    const similar = await api.get(`/api/logs/similar?job_id=${selJobId}&message=${encodeURIComponent(message)}&exclude_id=${rowId}`);
+    const opposite = relevance === 'irrelevant' ? 'irrelevant' : 'relevant';
+    // For irrelevant: find records not yet irrelevant; for relevant: find records not yet relevant
+    const targets = (similar || []).filter(r => r.relevance !== relevance);
+    if (targets.length > 0) {
+      showSimilarPrompt(targets, message, relevance);
+    }
+  }
+
+  btn.disabled = false;
+  refreshData();
+}
+
+// ── Similar prompt ────────────────────────────────────────────────────────────
+let _similarIds_ = [];
+let _similarRelevance_ = 'irrelevant';
+
+function showSimilarPrompt(rows, message, relevance) {
+  _similarIds_ = rows.map(r => r.id);
+  _similarRelevance_ = relevance || 'irrelevant';
+  document.getElementById('similar-count').textContent = rows.length;
+  document.getElementById('similar-msg').textContent = message.length > 80 ? message.slice(0,80)+'…' : message;
+  // Update button label to match direction
+  const btn = document.querySelector('#similar-modal .btn-red');
+  if (btn) {
+    btn.textContent = relevance === 'relevant' ? '✓ Mark All Relevant' : '✗ Mark All Irrelevant';
+    btn.style.background = relevance === 'relevant' ? 'rgba(63,185,80,.2)' : 'rgba(248,81,73,.15)';
+    btn.style.color = relevance === 'relevant' ? 'var(--green)' : 'var(--red)';
+    btn.style.borderColor = relevance === 'relevant' ? 'rgba(63,185,80,.4)' : 'rgba(248,81,73,.4)';
+  }
+  document.getElementById('similar-modal').classList.add('open');
+}
+
+async function bulkMarkSimilar() {
+  document.getElementById('similar-modal').classList.remove('open');
+  if (!_similarIds_.length) return;
+  const rel = _similarRelevance_;
+  await api.post('/api/logs/mark-bulk', { ids: _similarIds_, relevance: rel, severity: 'info' });
+  const label = rel === 'relevant' ? 'relevant ✓' : 'irrelevant ✗';
+  showToast('✓', `Marked ${_similarIds_.length} similar records as ${label}`, '', 100);
+  hideToast(3000);
+  refreshData();
+  _similarIds_ = [];
+}
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+async function showSummary() {
+  if (!selJobId || !lastDataRows_ || !lastDataRows_.length) return;
+  const btn = document.getElementById('btn-summary');
+  btn.disabled = true; btn.textContent = '⟳ Summarizing…';
+  const ids = lastDataRows_.map(r => r.id);
+  try {
+    const res = await api.post(`/api/jobs/${selJobId}/summarize`, { ids });
+    document.getElementById('summary-text').textContent = res.summary || 'No summary available.';
+    document.getElementById('summary-count').textContent = res.count || ids.length;
+    document.getElementById('summary-modal').classList.add('open');
+  } catch(e) {
+    showToast('✗', 'Summary failed', String(e), 0);
+    hideToast(4000);
+  }
+  btn.disabled = false; btn.textContent = '📋 Summary';
+}
+
+// ── Kibana-style document view ────────────────────────────────────────────────
+function syntaxHighlightJson(json) {
+  return json
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, m => {
+      if (/^"/.test(m)) {
+        if (/:$/.test(m)) return `<span class="json-key">${m}</span>`;
+        return `<span class="json-str">${m}</span>`;
+      }
+      if (/true|false/.test(m)) return `<span class="json-bool">${m}</span>`;
+      if (/null/.test(m))       return `<span class="json-null">${m}</span>`;
+      return `<span class="json-num">${m}</span>`;
+    });
+}
+
+function renderKfValue(raw) {
+  const trimmed = raw.trim();
+  // Try to parse as JSON (object or array)
+  if ((trimmed.startsWith('{') || trimmed.startsWith('[')) ) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const pretty = JSON.stringify(parsed, null, 2);
+      return `<div class="kf-json">${syntaxHighlightJson(pretty)}</div>`;
+    } catch(e) { /* fall through */ }
+  }
+  return `<span style="white-space:pre-wrap;word-break:break-all;">${esc(raw)}</span>`;
+}
+
+function buildKibanaDocView(row, rj) {
+  const allFields = {};
+  // DB meta fields first
+  allFields['@timestamp'] = row.timestamp || '';
+  allFields['_relevance'] = row.relevance || '';
+  allFields['_severity'] = row.severity || '';
+  if (row.ai_summary) allFields['_ai_summary'] = row.ai_summary;
+  // Raw JSON fields
+  Object.entries(rj).forEach(([k, v]) => {
+    if (k !== '@timestamp') {
+      let val = Array.isArray(v) ? (v[0] ?? '') : v;
+      if (val !== null && typeof val === 'object') val = JSON.stringify(val);
+      allFields[k] = String(val ?? '');
+    }
+  });
+
+  const rows = Object.entries(allFields).map(([field, value]) => {
+    const isMeta = field.startsWith('_');
+    const safeV = esc(String(value));
+    const safeF = esc(field);
+    const valueCell = renderKfValue(String(value));
+    const filterBtns = isMeta ? '' : `
+        <button class="kf-btn kf-plus"  title="Filter: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterInField(this.dataset.f, this.dataset.v)">+</button>
+        <button class="kf-btn kf-minus" title="Exclude: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterOutField(this.dataset.f, this.dataset.v)">−</button>`;
+    return `<tr class="kibana-field-row">
+      <td class="kf-actions">${filterBtns}</td>
+      <td class="kf-name ${isMeta ? 'kf-meta' : ''}">${esc(field)}</td>
+      <td class="kf-value">${valueCell}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="kibana-doc-wrap">
+    <div class="kibana-doc-header">
+      <span style="font-size:11px;font-weight:600;color:var(--tx1);">Document #${row.id}</span>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-sm" style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);font-size:10px;" onclick="markRow(${row.id},'relevant',this)">✓ Mark Relevant</button>
+        <button class="btn btn-sm" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);font-size:10px;" onclick="markRow(${row.id},'irrelevant',this)">✗ Mark Irrelevant</button>
+      </div>
+    </div>
+    <table class="kibana-doc-table">
+      <colgroup><col style="width:56px"><col style="width:180px"><col></colgroup>
+      <tbody>${rows}</tbody>
+    </table>
+    <div id="corr-inline-${row.id}"></div>
+  </div>`;
+}
+
+// ── Field-specific filter chips ──────────────────────────────────────────────
+// Each entry: {field, value, op}  where op = 'eq' (include) | 'neq' (exclude)
+let fieldFilters_ = [];
+
+function filterInField(field, value) {
+  // Remove any existing same-field filter, then add eq
+  fieldFilters_ = fieldFilters_.filter(f => !(f.field === field && f.op === 'eq'));
+  fieldFilters_.push({field, value, op: 'eq'});
+  renderExcludeChips();
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+function filterOutField(field, value) {
+  // Remove any existing same-field+value neq, then add
+  fieldFilters_ = fieldFilters_.filter(f => !(f.field === field && f.value === value && f.op === 'neq'));
+  fieldFilters_.push({field, value, op: 'neq'});
+  renderExcludeChips();
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// Keep old names as aliases so nothing else breaks
+function filterInValue(value)  { /* no-op: use filterInField */ }
+function filterOutValue(value) { /* no-op: use filterOutField */ }
+let excludeFilters_ = new Set(); // kept for compat, no longer used
+
+function rowMatchesExclude() { return false; } // server-side now
+
+function renderExcludeChips() {
+  const el = document.getElementById('exclude-chips');
+  if (!el) return;
+  if (!fieldFilters_.length) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.innerHTML = fieldFilters_.map((f, i) => {
+    const prefix = f.op === 'eq' ? '+' : '−';
+    const label  = `${esc(f.field)}:${esc(String(f.value).length > 30 ? String(f.value).slice(0,30)+'…' : String(f.value))}`;
+    return `<span class="exclude-chip op-${f.op}">${prefix}${label}
+      <button onclick="removeFieldFilter(${i})" title="Remove filter">×</button>
+    </span>`;
+  }).join('');
+}
+
+function removeFieldFilter(idx) {
+  fieldFilters_.splice(idx, 1);
+  renderExcludeChips();
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// ── Modal close on backdrop ───────────────────────────────────────────────────
+['modal','gh-modal','coderef-modal','similar-modal','summary-modal','group-modal'].forEach(id=>{
+  document.getElementById(id).addEventListener('click', e=>{
+    if(e.target.id===id) {
+      if (id==='modal') closeModal();
+      else {
+        document.getElementById(id).classList.remove('open');
+        if (id === 'similar-modal') _similarIds_ = []; // always clear on any close
+      }
+    }
+  });
+});
+
+init();
+
+// ── Log Correlation Groups ────────────────────────────────────────────────────
+let groups_ = [];
+
+async function openGroupModal() {
+  document.getElementById('group-modal').classList.add('open');
+  await refreshGroups();
+}
+
+async function refreshGroups() {
+  groups_ = await api.get('/api/groups');
+  renderGroupsList();
+}
+
+function renderGroupsList() {
+  const el = document.getElementById('groups-list-container');
+  if (!groups_.length) {
+    el.innerHTML = '<div style="color:var(--tx2);font-size:12px;padding:8px 0;">No groups yet. Create one above.</div>';
+    return;
+  }
+  el.innerHTML = groups_.map(g => `
+    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;background:var(--bg0);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div>
+          <span style="font-weight:600;font-size:13px;">${esc(g.name)}</span>
+          ${g.description ? `<span style="color:var(--tx2);font-size:11px;margin-left:8px;">${esc(g.description)}</span>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm" style="background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.3);font-size:10px;"
+                  onclick="detectKeys(${g.id})">⚡ Detect Keys</button>
+          <button class="btn btn-sm" style="background:rgba(63,185,80,.1);color:var(--green);border:1px solid rgba(63,185,80,.3);font-size:10px;"
+                  onclick="buildCorrelations(${g.id}, this.dataset.name)" data-name="${esc(g.name)}">🔗 Build Correlations</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:10px;" onclick="deleteGroup(${g.id})">✕</button>
+        </div>
+      </div>
+
+      <!-- Members -->
+      <div style="margin-bottom:10px;">
+        <div style="font-size:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Jobs in group</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;" id="members-${g.id}">
+          ${(g.members||[]).map(m => `
+            <span class="group-member-chip">
+              <span style="color:var(--blue);font-size:10px;">${esc(m.label||m.job_name)}</span>
+              <span style="color:var(--tx2);">(Job ${m.job_id})</span>
+              <button onclick="removeMember(${g.id},${m.job_id})" title="Remove">×</button>
+            </span>
+          `).join('')}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select class="filter-input" id="add-job-${g.id}" style="width:180px;padding:4px 6px;">
+            <option value="">— Add job —</option>
+            ${jobs.map(j => `<option value="${j.id}">${esc(j.name)} (${j.id})</option>`).join('')}
+          </select>
+          <input class="form-input" id="add-label-${g.id}" placeholder="Label (e.g. syslog)" style="width:120px;" />
+          <button class="btn btn-green btn-sm" onclick="addMember(${g.id})">Add</button>
+        </div>
+      </div>
+
+      <!-- Correlation keys -->
+      <div>
+        <div style="font-size:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Correlation Keys</div>
+        <div id="keys-${g.id}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px;">
+          ${(g.keys||[]).length === 0
+            ? '<div style="color:var(--tx2);font-size:11px;">No keys yet — click ⚡ Detect Keys</div>'
+            : (g.keys||[]).map(k => `
+              <div class="key-row">
+                <span class="key-src key-src-${k.source||'auto'}">${k.source||'auto'}</span>
+                <span style="color:var(--orange);">${esc(k.job_name_a||'?')}</span>
+                <span style="color:var(--blue);font-weight:600;">${esc(k.field_a)}</span>
+                <span style="color:var(--tx2);">↔</span>
+                <span style="color:var(--orange);">${esc(k.job_name_b||'?')}</span>
+                <span style="color:var(--blue);font-weight:600;">${esc(k.field_b)}</span>
+                <span class="key-conf">${Math.round((k.confidence||0)*100)}%</span>
+                <div style="flex:1;"></div>
+                <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px;" onclick="deleteKey(${g.id},${k.id})">✕</button>
+              </div>`).join('')
+          }
+        </div>
+        <!-- Manual add -->
+        <details style="font-size:11px;" open>
+          <summary style="color:var(--tx2);cursor:pointer;margin-bottom:6px;">+ Add key manually</summary>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+            <select class="filter-input" id="mk-ja-${g.id}" style="width:150px;padding:3px;">
+              <option value="">— Job A —</option>
+              ${(g.members||[]).map(m=>`<option value="${m.job_id}">${esc(m.label||m.job_name)} (${m.job_id})</option>`).join('')}
+            </select>
+            <input class="form-input" id="mk-fa-${g.id}" placeholder="field name" style="width:120px;" />
+            <span style="color:var(--tx2);font-size:14px;">↔</span>
+            <select class="filter-input" id="mk-jb-${g.id}" style="width:150px;padding:3px;">
+              <option value="">— Job B —</option>
+              ${(g.members||[]).map(m=>`<option value="${m.job_id}">${esc(m.label||m.job_name)} (${m.job_id})</option>`).join('')}
+            </select>
+            <input class="form-input" id="mk-fb-${g.id}" placeholder="field name" style="width:120px;" />
+            <button class="btn btn-green btn-sm" onclick="addKey(${g.id})">Add Key</button>
+          </div>
+          <div id="mk-err-${g.id}" style="color:var(--red);font-size:11px;margin-top:4px;display:none;"></div>
+        </details>
+      </div>
+
+      <!-- Detect progress -->
+      <div id="detect-progress-${g.id}" style="display:none;margin-top:10px;">
+        <div class="analyze-progress-bar active" style="margin:0;"><div class="analyze-bar-fill" id="detect-fill-${g.id}" style="width:5%;background:var(--purple);"></div></div>
+        <div style="font-size:11px;color:var(--tx2);margin-top:4px;" id="detect-msg-${g.id}">Starting…</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function createGroup() {
+  const name = document.getElementById('new-group-name').value.trim();
+  if (!name) return;
+  await api.post('/api/groups', {name});
+  document.getElementById('new-group-name').value = '';
+  await refreshGroups();
+}
+
+async function deleteGroup(gid) {
+  if (!confirm('Delete this group and all its correlation keys?')) return;
+  await api.del(`/api/groups/${gid}`);
+  await refreshGroups();
+}
+
+async function addMember(gid) {
+  const jid = +document.getElementById(`add-job-${gid}`).value;
+  const label = document.getElementById(`add-label-${gid}`).value.trim();
+  if (!jid) return;
+  await api.post(`/api/groups/${gid}/members`, {job_id: jid, label});
+  await refreshGroups();
+}
+
+async function removeMember(gid, jid) {
+  await api.del(`/api/groups/${gid}/members/${jid}`);
+  await refreshGroups();
+}
+
+async function addKey(gid) {
+  const jid_a   = +document.getElementById(`mk-ja-${gid}`).value;
+  const field_a = document.getElementById(`mk-fa-${gid}`).value.trim();
+  const jid_b   = +document.getElementById(`mk-jb-${gid}`).value;
+  const field_b = document.getElementById(`mk-fb-${gid}`).value.trim();
+  const errEl   = document.getElementById(`mk-err-${gid}`);
+
+  const missing = [];
+  if (!jid_a)   missing.push('Job A');
+  if (!field_a) missing.push('field name for Job A');
+  if (!jid_b)   missing.push('Job B');
+  if (!field_b) missing.push('field name for Job B');
+  if (missing.length) {
+    errEl.textContent = `Missing: ${missing.join(', ')}`;
+    errEl.style.display = 'block';
+    return;
+  }
+  if (jid_a === jid_b && field_a === field_b) {
+    errEl.textContent = 'Job A and Job B cannot be the same job with the same field';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+  await api.post(`/api/groups/${gid}/keys`, {job_id_a:jid_a, field_a, job_id_b:jid_b, field_b});
+  await refreshGroups();
+}
+
+async function deleteKey(gid, kid) {
+  await api.del(`/api/groups/${gid}/keys/${kid}`);
+  await refreshGroups();
+}
+
+function detectKeys(gid) {
+  const prog = document.getElementById(`detect-progress-${gid}`);
+  const fill = document.getElementById(`detect-fill-${gid}`);
+  const msg  = document.getElementById(`detect-msg-${gid}`);
+  prog.style.display = 'block';
+  fill.style.width = '5%';
+
+  const _bjId = bgJobStart('🔍', 'Detect Correlation Keys');
+  const es = new EventSource(`/api/groups/${gid}/detect-keys/stream`);
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'progress') {
+      msg.textContent = d.message || '';
+      fill.style.width = '40%';
+      bgJobProgress(_bjId, 40, d.message || '');
+    } else if (d.type === 'key_found') {
+      fill.style.width = '70%';
+      const m = `Found: ${d.field_a} ↔ ${d.field_b} (${d.source})`;
+      msg.textContent = m;
+      bgJobProgress(_bjId, 70, m);
+    } else if (d.type === 'done') {
+      es.close();
+      fill.style.width = '100%';
+      const m = `Done — ${d.keys_added} key(s) added`;
+      msg.textContent = m;
+      bgJobDone(_bjId, m);
+      setTimeout(() => { prog.style.display = 'none'; refreshGroups(); }, 2000);
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    msg.textContent = 'Error — check server logs';
+    fill.style.width = '0%';
+    bgJobError(_bjId, 'Server error');
+  };
+}
+
+function buildCorrelations(gid, groupName) {
+  const _bjId = bgJobStart('🔗', `Build Correlations: ${groupName}`);
+  const es = new EventSource(`/api/groups/${gid}/build-correlations/stream`);
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'progress') {
+      bgJobProgress(_bjId, 30, d.message || '');
+    } else if (d.type === 'pair_done') {
+      bgJobProgress(_bjId, 80, `${d.label_a} ↔ ${d.label_b}: ${d.linked} pairs linked`);
+    } else if (d.type === 'done') {
+      es.close();
+      bgJobDone(_bjId, `${d.linked} correlation pairs stored`);
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    bgJobError(_bjId, 'Server error');
+  };
+}
+
+// ── Correlated records in expanded view ───────────────────────────────────────
+async function loadCorrelated(logId, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  try {
+    const results = await api.get(`/api/logs/${logId}/correlated`);
+    if (!results.length) {
+      el.innerHTML = '<div style="color:var(--tx2);font-size:11px;padding:8px 12px;">No correlated records found</div>';
+      return;
+    }
+    el.innerHTML = results.map((r, i) => {
+      let rj = {};
+      try { rj = typeof r.raw_json === 'string' ? JSON.parse(r.raw_json) : (r.raw_json||{}); } catch(e){}
+      const msg = rj.message || '';
+      const m = Array.isArray(msg) ? (msg[0]||'') : String(msg||'');
+      const uid = `corr-${logId}-${i}`;
+
+      // Build full field rows from raw_json (flatten, skip empties)
+      const fieldRows = Object.entries(rj).map(([k, v]) => {
+        let disp = Array.isArray(v) ? (v[0]??'') : v;
+        if (disp !== null && typeof disp === 'object') disp = renderKfValue(JSON.stringify(disp));
+        else disp = renderKfValue(String(disp ?? ''));
+        return `<tr><td>${esc(k)}</td><td>${disp}</td></tr>`;
+      }).join('');
+
+      // Also add DB meta fields
+      const metaRows = [
+        r.timestamp ? `<tr><td>@timestamp</td><td>${esc(String(r.timestamp))}</td></tr>` : '',
+        r.relevance  ? `<tr><td>_relevance</td><td>${esc(r.relevance)}</td></tr>` : '',
+        r.severity   ? `<tr><td>_severity</td><td>${esc(r.severity)}</td></tr>` : '',
+        r.ai_summary ? `<tr><td>_ai_summary</td><td>${esc(r.ai_summary)}</td></tr>` : '',
+      ].join('');
+
+      return `<div class="corr-record">
+        <div class="corr-record-hdr" onclick="toggleCorrRecord('${uid}')">
+          <span class="corr-expand-arrow" id="arrow-${uid}">▶</span>
+          <span class="corr-source-badge">${esc(r._source_label)}</span>
+          ${(r._matched_keys||[]).map(k=>`<span class="corr-key-badge">${esc(k)}</span>`).join(' ')}
+          ${r.severity ? `<span class="sev sev-${r.severity}">${r.severity}</span>` : ''}
+          <span class="corr-message">${esc(m.slice(0, 150))}</span>
+          <span class="corr-meta">${r.timestamp||''}</span>
+        </div>
+        <div class="corr-fields" id="fields-${uid}">
+          <table><tbody>${metaRows}${fieldRows}</tbody></table>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 12px;">Error: ${esc(String(e))}</div>`;
+  }
+}
+
+function toggleCorrRecord(uid) {
+  const fields = document.getElementById(`fields-${uid}`);
+  const arrow  = document.getElementById(`arrow-${uid}`);
+  const open   = fields.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+  arrow.textContent = open ? '▼' : '▶';
+}
+
+function toggleCorrPanel(rowId) {
+  const body = document.getElementById(`corr-body-${rowId}`);
+  const toggle = document.getElementById(`corr-toggle-${rowId}`);
+  const isOpen = body.classList.toggle('open');
+  toggle.textContent = isOpen ? '▼ Loaded' : '▶ Load';
+  if (isOpen) {
+    const contentEl = document.getElementById(`corr-content-${rowId}`);
+    contentEl.innerHTML = '<div style="color:var(--tx2);font-size:11px;padding:8px 12px;">Loading…</div>';
+    loadCorrelated(rowId, `corr-content-${rowId}`);
+  }
+}
+</script>
+</body>
+</html>
