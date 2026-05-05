@@ -9,19 +9,13 @@ Setup in Claude Desktop config (~/.claude/claude_desktop_config.json):
   "mcpServers": {
     "kibana-scraper": {
       "command": "python3",
-      "args": ["/Users/mack.xu/Documents/Hackathon/2026/kibana-scraper/mcp_server.py"],
+      "args": ["<path-to-this-repo>/mcp_server.py"],
       "env": {}
     }
   }
 }
 
-Then restart Claude Desktop. Claude can then call:
-  - list_jobs()
-  - get_stats(job_id?)
-  - query_logs(job_id, limit, severity, relevant_only, search)
-  - fetch_logs_for_analysis(job_id, limit, offset)
-  - save_analysis_results(results)
-  - get_analysis_summary(job_id)
+Then restart Claude Desktop.
 """
 
 import json
@@ -31,7 +25,7 @@ from pathlib import Path
 
 # Load keys.json so ANTHROPIC_API_KEY / GITHUB_TOKEN are available
 SCRAPER_DIR = Path(__file__).parent
-KEYS_FILE = SCRAPER_DIR / "keys.json"
+KEYS_FILE   = SCRAPER_DIR / "keys.json"
 if KEYS_FILE.exists():
     try:
         for k, v in json.loads(KEYS_FILE.read_text()).items():
@@ -40,8 +34,8 @@ if KEYS_FILE.exists():
     except Exception:
         pass
 
-from db import qone, qall, exe, init_db   # noqa: E402
-from analyzer import analyze_batch, search_github  # noqa: E402
+from db import qone, qall, exe, init_db, parse_raw_json   # noqa: E402
+from analyzer import analyze_batch, search_github           # noqa: E402
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -53,22 +47,8 @@ except ImportError:
 
 mcp = FastMCP("kibana-scraper")
 
-# Ensure schema on startup
+# Ensure schema on startup (columns already created by db.init_db)
 init_db()
-
-
-def _ensure_analysis_columns():
-    """Add analysis columns if they don't exist (backward compat guard)."""
-    for col, defn in [
-        ("relevance",  "TEXT DEFAULT NULL"),
-        ("severity",   "TEXT DEFAULT NULL"),
-        ("ai_summary", "TEXT DEFAULT NULL"),
-        ("code_refs",  "TEXT DEFAULT NULL"),
-    ]:
-        try:
-            exe(f"ALTER TABLE log_events ADD COLUMN {col} {defn}")
-        except Exception:
-            pass  # column already exists
 
 
 @mcp.tool()
@@ -78,20 +58,35 @@ def list_jobs() -> str:
     if not jobs:
         return "No jobs found."
 
+    # Batch aggregates — one query each instead of N×3 per-job queries
+    counts = {
+        r["job_id"]: r["total"]
+        for r in qall("SELECT job_id, COUNT(*) AS total FROM log_events GROUP BY job_id") or []
+    }
+    analyzed = {
+        r["job_id"]: r["n"]
+        for r in qall(
+            "SELECT job_id, COUNT(*) AS n FROM log_events "
+            "WHERE relevance IS NOT NULL GROUP BY job_id"
+        ) or []
+    }
+    last_ts = {
+        r["job_id"]: r["ts"]
+        for r in qall("SELECT job_id, MAX(timestamp) AS ts FROM log_events GROUP BY job_id") or []
+    }
+
     lines = []
     for j in jobs:
-        count = (qone("SELECT COUNT(*) AS n FROM log_events WHERE job_id=?", (j["id"],)) or {}).get("n", 0)
-        last  = (qone("SELECT MAX(timestamp) AS ts FROM log_events WHERE job_id=?", (j["id"],)) or {}).get("ts")
-        analyzed = (qone(
-            "SELECT COUNT(*) AS n FROM log_events WHERE job_id=? AND relevance IS NOT NULL",
-            (j["id"],)
-        ) or {}).get("n", 0)
+        jid    = j["id"]
+        count  = counts.get(jid, 0)
+        analy  = analyzed.get(jid, 0)
+        last   = last_ts.get(jid) or "never"
         status = "✓ enabled" if j["enabled"] else "✗ disabled"
         lines.append(
-            f"Job {j['id']}: {j['name']} [{status}]\n"
+            f"Job {jid}: {j['name']} [{status}]\n"
             f"  URL: {j['kibana_url'][:80]}...\n"
-            f"  Logs: {count:,} total, {analyzed:,} analyzed\n"
-            f"  Last scraped: {last or 'never'}"
+            f"  Logs: {count:,} total, {analy:,} analyzed\n"
+            f"  Last scraped: {last}"
         )
     return "\n\n".join(lines)
 
@@ -115,20 +110,19 @@ def get_stats(job_id: int = 0) -> str:
         rel_rows = qall("SELECT relevance, COUNT(*) AS n FROM log_events WHERE relevance IS NOT NULL GROUP BY relevance ORDER BY n DESC")
         scope = "All jobs"
 
-    lines = [f"=== {scope} Stats ===",
-             f"Total logs: {total:,}",
-             f"Analyzed:   {analyzed:,} ({100*analyzed//total if total else 0}%)"]
-
+    lines = [
+        f"=== {scope} Stats ===",
+        f"Total logs: {total:,}",
+        f"Analyzed:   {analyzed:,} ({100 * analyzed // total if total else 0}%)",
+    ]
     if rel_rows:
         lines.append("\nRelevance:")
         for r in rel_rows:
             lines.append(f"  {r['relevance']}: {r['n']:,}")
-
     if sev_rows:
         lines.append("\nSeverity:")
         for r in sev_rows:
             lines.append(f"  {r['severity']}: {r['n']:,}")
-
     return "\n".join(lines)
 
 
@@ -147,24 +141,22 @@ def query_logs(
         job_id: Which job's logs to query (required)
         limit: Max rows to return (default 20, max 200)
         severity: Filter by severity: critical, high, medium, low, info
-        relevant_only: If true, only return checkout-relevant logs
+        relevant_only: If true, only return relevant logs
         search: Text to search in raw_json (case-insensitive)
     """
     limit = min(limit, 200)
-    conditions = ["job_id=?"]
+    conditions: list[str] = ["job_id=?"]
     params: list = [job_id]
 
     if severity:
-        conditions.append("severity=?")
-        params.append(severity)
+        conditions.append("severity=?"); params.append(severity)
     if relevant_only:
         conditions.append("relevance='relevant'")
     if search:
-        conditions.append("raw_json LIKE ?")
-        params.append(f"%{search}%")
+        conditions.append("raw_json LIKE ?"); params.append(f"%{search}%")
 
     where = " AND ".join(conditions)
-    rows = qall(
+    rows  = qall(
         f"SELECT id, timestamp, relevance, severity, ai_summary, raw_json "
         f"FROM log_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
         params + [limit]
@@ -175,21 +167,14 @@ def query_logs(
 
     lines = [f"Found {len(rows)} log(s):"]
     for row in rows:
-        rj = row.get("raw_json") or {}
-        if isinstance(rj, str):
-            try:
-                rj = json.loads(rj)
-            except Exception:
-                rj = {}
-
+        rj  = parse_raw_json(row.get("raw_json"))
         msg = rj.get("message", "")
-        if isinstance(msg, list):
-            msg = msg[0] if msg else ""
+        if isinstance(msg, list): msg = msg[0] if msg else ""
         msg = str(msg)[:200]
 
         sev_label = f"[{row['severity'].upper()}]" if row.get("severity") else ""
         rel_label = "✓" if row.get("relevance") == "relevant" else ("✗" if row.get("relevance") == "irrelevant" else "?")
-        summary = row.get("ai_summary") or ""
+        summary   = row.get("ai_summary") or ""
 
         lines.append(
             f"\n--- Log #{row['id']} {sev_label} {rel_label} @ {row.get('timestamp','?')} ---\n"
@@ -215,9 +200,8 @@ def fetch_logs_for_analysis(job_id: int, limit: int = 50, offset: int = 0) -> st
     Args:
         job_id: Which job's logs to fetch
         limit: How many logs to fetch (default 50, max 100)
-        offset: Skip this many rows (for pagination through all logs)
+        offset: Skip this many rows (for pagination)
     """
-    _ensure_analysis_columns()
     limit = min(limit, 100)
 
     rows = qall(
@@ -240,45 +224,39 @@ def fetch_logs_for_analysis(job_id: int, limit: int = 50, offset: int = 0) -> st
             "logs": []
         })
 
+    def _field(rj: dict, key: str) -> str:
+        v = rj.get(key, "")
+        if isinstance(v, list): v = v[0] if v else ""
+        if isinstance(v, dict): return json.dumps(v)[:200]
+        return str(v or "")[:300]
+
     logs = []
     for row in rows:
-        rj = row.get("raw_json") or {}
-        if isinstance(rj, str):
-            try:
-                rj = json.loads(rj)
-            except Exception:
-                rj = {}
-
-        def _field(key):
-            v = rj.get(key, "")
-            if isinstance(v, list): v = v[0] if v else ""
-            if isinstance(v, dict): return json.dumps(v)[:200]
-            return str(v or "")[:300]
-
+        rj = parse_raw_json(row.get("raw_json"))
         logs.append({
-            "id": row["id"],
-            "timestamp": str(row.get("timestamp", "")),
-            "error_level": _field("error_level"),
-            "message": _field("message"),
-            "request_uri": _field("request_uri"),
-            "store_id": _field("store_id"),
-            "domain": _field("domain"),
+            "id":          row["id"],
+            "timestamp":   str(row.get("timestamp", "")),
+            "error_level": _field(rj, "error_level"),
+            "message":     _field(rj, "message"),
+            "request_uri": _field(rj, "request_uri"),
+            "store_id":    _field(rj, "store_id"),
+            "domain":      _field(rj, "domain"),
         })
 
     return json.dumps({
-        "status": "ok",
-        "job_id": job_id,
-        "fetched": len(logs),
+        "status":        "ok",
+        "job_id":        job_id,
+        "fetched":       len(logs),
         "total_pending": total_pending,
         "instruction": (
-            "Analyze each log entry below. For each, decide: "
+            "Analyze each log entry. For each: "
             "(1) relevant=true if related to checkout/cart/payment/order, else false. "
             "(2) severity: critical/high/medium/low/info. "
             "(3) summary: one sentence. "
-            "(4) github_terms: 1-2 specific class/method names or error codes from the message. "
+            "(4) github_terms: 1-2 specific class/method names or error codes. "
             "Then call save_analysis_results() with ALL results in one call."
         ),
-        "logs": logs
+        "logs": logs,
     }, ensure_ascii=False, indent=2)
 
 
@@ -291,42 +269,33 @@ def save_analysis_results(results: list) -> str:
 
     Args:
         results: List of objects, each with:
-          - id (int): log row id from fetch_logs_for_analysis
+          - id (int): log row id
           - relevant (bool): true if checkout/payment related
           - severity (str): "critical" | "high" | "medium" | "low" | "info"
           - summary (str): one-sentence description
-          - github_terms (list[str]): optional, 1-2 terms to search in GitHub source
-
-    Example:
-        [
-          {"id": 1234, "relevant": true, "severity": "high",
-           "summary": "PayPal checkout failed with PAYMENTS-335 error",
-           "github_terms": ["PAYMENTS-335", "finalizeOrder"]},
-          {"id": 1235, "relevant": false, "severity": "info",
-           "summary": "Routine agent heartbeat log", "github_terms": []}
-        ]
+          - github_terms (list[str]): optional, 1-2 terms to search in GitHub
     """
     if not results:
         return "No results provided."
 
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    saved = 0
+    github_token  = os.environ.get("GITHUB_TOKEN", "")
+    saved         = 0
     relevant_count = 0
-    errors = []
+    errors: list[str] = []
 
     for res in results:
         try:
-            row_id   = int(res["id"])
-            relevant = bool(res.get("relevant", False))
-            severity = str(res.get("severity", "info"))
-            summary  = str(res.get("summary", ""))
-            terms    = res.get("github_terms", [])
-
+            row_id        = int(res["id"])
+            relevant      = bool(res.get("relevant", False))
+            severity      = str(res.get("severity", "info"))
+            summary       = str(res.get("summary", ""))
+            terms         = res.get("github_terms", [])
             relevance_val = "relevant" if relevant else "irrelevant"
+
             if relevant:
                 relevant_count += 1
 
-            code_refs = []
+            code_refs: list = []
             if relevant and terms and github_token:
                 code_refs = search_github(terms, github_token)
 
@@ -362,42 +331,37 @@ def get_analysis_summary(job_id: int) -> str:
         (job_id,)
     )
 
-    medium_count = (qall(
+    medium_count = ((qall(
         "SELECT COUNT(*) AS n FROM log_events "
         "WHERE job_id=? AND severity='medium' AND relevance='relevant'",
         (job_id,)
-    ) or [{}])[0].get("n", 0)
+    ) or [{}])[0]).get("n", 0)
 
     stats = qone(
-        "SELECT "
-        "  COUNT(*) AS total,"
-        "  SUM(CASE WHEN relevance='relevant' THEN 1 ELSE 0 END) AS relevant,"
-        "  SUM(CASE WHEN relevance='irrelevant' THEN 1 ELSE 0 END) AS irrelevant "
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN relevance='relevant' THEN 1 ELSE 0 END) AS relevant, "
+        "SUM(CASE WHEN relevance='irrelevant' THEN 1 ELSE 0 END) AS irrelevant "
         "FROM log_events WHERE job_id=? AND relevance IS NOT NULL",
         (job_id,)
     ) or {}
 
     lines = [
         f"=== Analysis Summary — Job {job_id} ===",
-        f"Analyzed: {stats.get('total',0):,} logs",
-        f"  Checkout-relevant: {stats.get('relevant',0):,}",
-        f"  Irrelevant: {stats.get('irrelevant',0):,}",
+        f"Analyzed: {stats.get('total', 0):,} logs",
+        f"  Checkout-relevant: {stats.get('relevant', 0):,}",
+        f"  Irrelevant: {stats.get('irrelevant', 0):,}",
         f"  Medium severity: {medium_count:,}",
         "",
-        "=== Critical / High Severity Issues ==="
+        "=== Critical / High Severity Issues ===",
     ]
 
     if not critical:
         lines.append("No critical or high severity issues found.")
     else:
         for row in critical:
-            refs = row.get("code_refs") or []
-            if isinstance(refs, str):
-                try:
-                    refs = json.loads(refs)
-                except Exception:
-                    refs = []
-
+            refs = parse_raw_json(row.get("code_refs")) if isinstance(row.get("code_refs"), str) else (row.get("code_refs") or [])
+            if not isinstance(refs, list):
+                refs = []
             lines.append(
                 f"\n[{row['severity'].upper()}] @ {row.get('timestamp','?')}\n"
                 f"  {row.get('ai_summary','(no summary)')}"

@@ -5,6 +5,7 @@ AI analysis: Claude for log classification, GitHub for code references.
 import json
 import os
 import re
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -12,6 +13,14 @@ import requests
 
 # Thread pool for blocking GitHub requests (keeps async routes unblocked)
 _github_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="github")
+
+# Single model constant — used in analyze_batch and referenced by app routes
+HAIKU_MODEL = "claude-haiku-4-5"
+
+# ── Prompt cache — avoid a DB hit on every analyze_batch() call ───────────────
+_prompt_cache: str | None = None
+_prompt_cache_ts: float = 0.0
+_PROMPT_CACHE_TTL = 60.0   # seconds
 
 
 def _get_client():
@@ -27,15 +36,23 @@ def _get_client():
 
 
 def _get_ai_prompt_prefix() -> str:
-    """Return the user-configured system prompt prefix, or the default."""
+    """Return the user-configured system prompt prefix (cached for 60 s)."""
+    global _prompt_cache, _prompt_cache_ts
+    now = time.monotonic()
+    if _prompt_cache is not None and (now - _prompt_cache_ts) < _PROMPT_CACHE_TTL:
+        return _prompt_cache
     try:
         from db import qone
         row = qone("SELECT value FROM ai_config WHERE key='system_prompt'")
         if row and row.get("value"):
-            return row["value"].strip()
+            _prompt_cache = row["value"].strip()
+            _prompt_cache_ts = now
+            return _prompt_cache
     except Exception:
         pass
-    return "You are analyzing BigCommerce production logs to find checkout/payment issues."
+    _prompt_cache = "You are analyzing BigCommerce production logs to find checkout/payment issues."
+    _prompt_cache_ts = now
+    return _prompt_cache
 
 
 def _extract(raw_json: dict, name: str) -> str:
@@ -93,7 +110,7 @@ Logs:
 
     try:
         resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=HAIKU_MODEL,
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}],
         )

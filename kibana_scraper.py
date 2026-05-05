@@ -26,7 +26,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 from db import DB_PATH, init_db
 
-SESSION_FILE = Path("session.json")
+SESSION_FILE = Path(__file__).parent / "session.json"  # anchored to script dir, not cwd
 OUTPUT_DIR   = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 

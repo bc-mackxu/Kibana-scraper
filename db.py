@@ -36,6 +36,19 @@ def _db() -> sqlite3.Connection:
     return conn
 
 
+def parse_raw_json(v) -> dict:
+    """Safely parse a raw_json value that may already be a dict or a JSON string."""
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            result = json.loads(v)
+            return result if isinstance(result, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
 def qone(sql, args=()):
     return _db().execute(sql, args).fetchone()
 
