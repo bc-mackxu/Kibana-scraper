@@ -118,20 +118,20 @@ class HitCollector:
     def __init__(self):
         self._hits: list[dict] = []
         self._lock = threading.Lock()
+        self.es_total: int = 0        # total hits reported by ES (for % progress)
+        self.total_inserted: int = 0  # cumulative rows saved to DB
 
     def handle_response(self, response):
         """Playwright response handler — runs on browser thread."""
         url = response.url
         if "/internal/bsearch" not in url:
             return
-        print(f"    [bsearch] response received, status={response.status}")
         try:
             body = response.body()
             text = body.decode("utf-8", errors="replace")
         except Exception as e:
             print(f"    [bsearch] body error: {e}")
             return
-
         self._parse_bsearch(text)
 
     def handle_route(self, route, request):
@@ -140,7 +140,6 @@ class HitCollector:
         if "/internal/bsearch" in request.url:
             try:
                 text = response.text()
-                print(f"    [bsearch] route captured, len={len(text)}")
                 self._parse_bsearch(text, debug=True)
             except Exception as e:
                 print(f"    [bsearch] route error: {e}")
@@ -176,17 +175,19 @@ class HitCollector:
             batch = hits_obj.get("hits", [])
             total_raw = hits_obj.get("total", {})
             total = total_raw.get("value", total_raw) if isinstance(total_raw, dict) else total_raw
-            if debug:
-                print(f"    [parse] isRunning={is_running} hits={len(batch)} total={total}")
-                if total and total != {} and not batch:
-                    print(f"    [parse] FULL OBJ: {json.dumps(obj)[:800]}")
+            if debug and not is_running and isinstance(total, int) and total > 0:
+                print(f"    [bsearch] ES total={total:,}  hits_in_batch={len(batch)}")
+            # Capture ES total for progress % (only trust non-zero, non-running values)
+            if isinstance(total, int) and total > 0 and not is_running:
+                with self._lock:
+                    if total > self.es_total:
+                        self.es_total = total
             if batch:
                 new_hits.extend(batch)
 
         if new_hits:
             with self._lock:
                 self._hits.extend(new_hits)
-            print(f"    [✓] captured {len(new_hits)} hits (total buffered: {len(self._hits)})")
 
     def drain(self) -> list[dict]:
         with self._lock:
@@ -410,6 +411,35 @@ def refresh_page(page):
         pass
 
 
+def read_time_range_from_page(page) -> str | None:
+    """Read the currently active time range label from Kibana's date picker."""
+    # Try quick-range text first (e.g. "Last 24 hours")
+    for sel in [
+        '[data-test-subj="superDatePickerToggleQuickMenuButton"]',
+        '[data-test-subj="superDatePickerShowDatesButton"]',
+    ]:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                txt = el.inner_text().strip()
+                if txt and txt not in ("show dates", ""):
+                    return txt
+        except Exception:
+            pass
+    # Try absolute start/end labels
+    try:
+        start_el = page.query_selector('[data-test-subj="superDatePickerstartDatePopoverButton"]')
+        end_el   = page.query_selector('[data-test-subj="superDatePickerendDatePopoverButton"]')
+        if start_el and end_el:
+            s = start_el.inner_text().strip()
+            e = end_el.inner_text().strip()
+            if s or e:
+                return f"{s} → {e}"
+    except Exception:
+        pass
+    return None
+
+
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 def cmd_login(url: str):
@@ -534,8 +564,21 @@ def cmd_scrape(args):
         else:
             refresh_page(page)
 
+        # ── Verify active time range ──────────────────────────────────────────
+        page.wait_for_timeout(1500)
+        active_time = read_time_range_from_page(page)
+        if active_time:
+            print(f"[✓] Active time range: {active_time}")
+        else:
+            print(f"[!] Could not read active time range from page")
+
         print("[→] Waiting for async search to complete...")
         page.wait_for_timeout(8000)
+
+        # Track rows already in DB to compute "new vs duplicate" at the end
+        existing_before = (conn.execute(
+            "SELECT COUNT(*) FROM log_events WHERE job_id=?", (args.job_id,)
+        ).fetchone() or [0])[0] if args.job_id else 0
 
         page_num = 0
         while True:
@@ -551,7 +594,16 @@ def cmd_scrape(args):
             if hits:
                 saved = save_hits_to_db(conn, hits, run_id=args.run_id, job_id=args.job_id)
                 total_saved += saved
-                print(f"[✓] Page {page_num}: {saved} rows saved (total {total_saved})")
+
+                # Progress %: based on ES total if known, else page count
+                es_total = collector.es_total
+                if es_total > 0:
+                    pct = min(100, round(total_saved / es_total * 100))
+                    bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                    print(f"[✓] Page {page_num}: +{saved} rows  |  {total_saved:,}/{es_total:,} ({pct}%) [{bar}]")
+                else:
+                    pages_pct = min(100, round(page_num / args.pages * 100))
+                    print(f"[✓] Page {page_num}: +{saved} rows saved  (total {total_saved:,})  [{pages_pct}% of max pages]")
             else:
                 print(f"[!] Page {page_num}: no hits captured")
 
@@ -569,12 +621,41 @@ def cmd_scrape(args):
         if hits:
             saved = save_hits_to_db(conn, hits, run_id=args.run_id, job_id=args.job_id)
             total_saved += saved
-            print(f"[✓] Final flush: {saved} rows (total {total_saved})")
+            print(f"[✓] Final flush: +{saved} rows (total {total_saved:,})")
 
         browser.close()
 
+    # ── End summary ───────────────────────────────────────────────────────────
+    new_rows = 0
+    corr_count = 0
+    if args.job_id:
+        row = conn.execute("SELECT COUNT(*) FROM log_events WHERE job_id=?", (args.job_id,)).fetchone()
+        total_in_db = (row or [0])[0]
+        new_rows = total_in_db - existing_before
+        # Count correlated pairs involving this job's logs
+        row2 = conn.execute(
+            "SELECT COUNT(*) FROM log_correlations lc "
+            "JOIN log_events le ON le.id=lc.log_id WHERE le.job_id=?",
+            (args.job_id,)
+        ).fetchone()
+        corr_count = (row2 or [0])[0]
+
     conn.close()
-    print(f"\n[✓] Done. Total rows saved: {total_saved}")
+
+    print(f"\n{'━'*55}")
+    print(f"  Run complete")
+    print(f"{'━'*55}")
+    print(f"  Attempted to save : {total_saved:>8,} rows")
+    if args.job_id:
+        dup_rows = total_saved - new_rows
+        print(f"  New rows in DB    : {new_rows:>8,}")
+        print(f"  Duplicates skipped: {dup_rows:>8,}")
+        print(f"  Total in DB (job) : {total_in_db:>8,}")
+        if corr_count:
+            print(f"  Correlated records: {corr_count:>8,}")
+        else:
+            print(f"  Correlated records:        – (run Build Correlations)")
+    print(f"{'━'*55}\n")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
