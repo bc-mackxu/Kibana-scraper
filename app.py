@@ -63,6 +63,18 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # In-memory state for active runs
 _run_logs:   dict[int, list[str]] = {}  # run_id → lines
 _run_status: dict[int, str]       = {}  # run_id → "running"|"success"|"failed"
+_run_procs:  dict[int, object]    = {}  # run_id → subprocess.Popen (for cancellation)
+
+_RUN_LOG_MAX_LINES = 5000   # cap per run to prevent unbounded memory
+_RUN_KEEP_FINISHED = 50     # keep at most this many finished run entries in memory
+
+def _evict_old_runs():
+    """Drop finished run entries beyond the keep limit (B2 memory leak fix)."""
+    finished = [rid for rid, st in _run_status.items() if st != "running"]
+    for rid in finished[:-_RUN_KEEP_FINISHED]:
+        _run_logs.pop(rid, None)
+        _run_status.pop(rid, None)
+        _run_procs.pop(rid, None)
 
 scheduler = BackgroundScheduler(timezone="UTC")
 
@@ -145,17 +157,24 @@ def _run_one_window(run_id: int, job: dict, time_args: list, rows_saved_ref: lis
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, cwd=str(SCRAPER_DIR),
         )
+        _run_procs[run_id] = proc
+        logs = _run_logs[run_id]
         for line in proc.stdout:
             line = line.rstrip()
-            _run_logs[run_id].append(line)
+            logs.append(line)
+            # cap log size to avoid unbounded memory (B2)
+            if len(logs) > _RUN_LOG_MAX_LINES:
+                del logs[0]
             if "rows saved (total" in line or "Total rows saved:" in line:
                 for tok in line.split():
                     if tok.isdigit():
                         rows_saved_ref[0] = int(tok)
         proc.wait()
+        _run_procs.pop(run_id, None)
         return proc.returncode == 0
     except Exception as e:
         _run_logs[run_id].append(f"[ERROR] {e}")
+        _run_procs.pop(run_id, None)
         return False
 
 
@@ -229,10 +248,13 @@ def _do_run(run_id: int, job: dict):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log = "\n".join(_run_logs[run_id])
 
+    # Cap log_output at 50 KB to avoid bloating the DB (D3)
+    log_capped = log if len(log) <= 51200 else log[-51200:]
     exe("UPDATE job_runs SET status=?, finished_at=?, rows_saved=?, log_output=? WHERE id=?",
-        (status, now, rows_ref[0], log, run_id))
+        (status, now, rows_ref[0], log_capped, run_id))
     exe("UPDATE scrape_jobs SET last_run_at=?, last_run_status=?, last_rows_saved=? WHERE id=?",
         (now, status, rows_ref[0], job["id"]))
+    _evict_old_runs()
 
 
 def _start_run(job_id: int) -> int:
@@ -271,14 +293,30 @@ def static_file(filename: str):
 
 @app.get("/api/stats")
 def stats():
+    severity_rows = qall(
+        "SELECT severity, COUNT(*) as cnt FROM log_events "
+        "WHERE severity IS NOT NULL GROUP BY severity"
+    ) or []
+    severity_map = {r["severity"]: r["cnt"] for r in severity_rows}
+    rel_rows = qall(
+        "SELECT relevance, COUNT(*) as cnt FROM log_events GROUP BY relevance"
+    ) or []
+    rel_map = {(r["relevance"] or "unchecked"): r["cnt"] for r in rel_rows}
     return {
-        "total_jobs": (qone("SELECT COUNT(*) c FROM scrape_jobs") or {}).get("c", 0),
-        "total_rows": (qone("SELECT COUNT(*) c FROM log_events")  or {}).get("c", 0),
-        "recent_runs": qall(
+        "total_jobs":    (qone("SELECT COUNT(*) c FROM scrape_jobs") or {}).get("c", 0),
+        "total_rows":    (qone("SELECT COUNT(*) c FROM log_events")  or {}).get("c", 0),
+        "severity":      severity_map,
+        "relevance":     rel_map,
+        "recent_runs":   qall(
             "SELECT jr.id, jr.status, jr.rows_saved, jr.started_at, jr.finished_at, sj.name "
             "FROM job_runs jr JOIN scrape_jobs sj ON jr.job_id=sj.id "
             "ORDER BY jr.id DESC LIMIT 8"
         ),
+        "top_jobs": qall(
+            "SELECT sj.id, sj.name, COUNT(le.id) as rows "
+            "FROM scrape_jobs sj LEFT JOIN log_events le ON le.job_id=sj.id "
+            "GROUP BY sj.id ORDER BY rows DESC LIMIT 5"
+        ) or [],
     }
 
 
@@ -407,17 +445,53 @@ def job_runs(jid: int):
     )
 
 
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: int):
+    """Kill the scraper subprocess for a running job (F7)."""
+    proc = _run_procs.get(run_id)
+    if proc is None:
+        st = _run_status.get(run_id)
+        if st and st != "running":
+            return {"ok": False, "message": f"Run already {st}"}
+        return {"ok": False, "message": "No active process found"}
+    try:
+        proc.terminate()
+        import time as _t; _t.sleep(0.5)
+        if proc.poll() is None:
+            proc.kill()
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+    _run_logs.get(run_id, []).append("[✗] Run cancelled by user")
+    _run_status[run_id] = "failed"
+    exe("UPDATE job_runs SET status='failed', finished_at=? WHERE id=?",
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), run_id))
+    _run_procs.pop(run_id, None)
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{jid}/fields")
 def job_fields(jid: int):
-    """Return sorted list of all field names found in raw_json for this job."""
-    rows = qall("SELECT raw_json FROM log_events WHERE job_id=? LIMIT 30", (jid,))
+    """Return sorted field names from a stratified sample (first+last+random). B7 fix."""
+    total = (qone("SELECT COUNT(*) c FROM log_events WHERE job_id=?", (jid,)) or {}).get("c", 0)
+    if total == 0:
+        return []
+    # Stratified: first 30, last 30, up to 40 from the middle
+    rows = qall("SELECT raw_json FROM log_events WHERE job_id=? ORDER BY id ASC  LIMIT 30", (jid,))
+    rows += qall("SELECT raw_json FROM log_events WHERE job_id=? ORDER BY id DESC LIMIT 30", (jid,))
+    if total > 60:
+        mid_offset = max(0, total // 2 - 20)
+        rows += qall("SELECT raw_json FROM log_events WHERE job_id=? ORDER BY id ASC LIMIT 40 OFFSET ?",
+                     (jid, mid_offset))
     fields: set[str] = set()
     for row in rows:
         rj = row.get("raw_json")
         if not rj:
             continue
-        data = rj if isinstance(rj, dict) else json.loads(rj)
-        fields.update(data.keys())
+        try:
+            data = rj if isinstance(rj, dict) else json.loads(rj)
+            fields.update(data.keys())
+        except Exception:
+            pass
     first = ["@timestamp"] if "@timestamp" in fields else []
     others = sorted(f for f in fields if f != "@timestamp")
     return first + others
@@ -941,28 +1015,47 @@ def create_collection(body: CollectionIn):
 
 @app.put("/api/collections/{cid}")
 def update_collection(cid: int, body: CollectionIn):
+    """B5 fix: properly UPDATE existing sources instead of delete+insert."""
     exe("UPDATE scrape_collections SET name=?,time_range=?,chunk_hours=?,schedule_hour=?,enabled=? WHERE id=?",
         (body.name, body.time_range, body.chunk_hours, body.schedule_hour, int(body.enabled), cid))
 
-    existing_srcs = {r["id"]: r for r in
-                     qall("SELECT * FROM collection_sources WHERE collection_id=?", (cid,))}
-    job_ids = []
     coll_dict = {"time_range": body.time_range, "chunk_hours": body.chunk_hours,
                  "schedule_hour": body.schedule_hour, "enabled": body.enabled}
-    new_src_ids = set()
+
+    # Match incoming sources to existing ones by position (sort_order)
+    existing_srcs = qall(
+        "SELECT * FROM collection_sources WHERE collection_id=? ORDER BY sort_order, id", (cid,)
+    ) or []
+    existing_by_pos = {r["sort_order"]: r for r in existing_srcs}
+    existing_ids_all = {r["id"] for r in existing_srcs}
+
+    job_ids = []
+    touched_src_ids = set()
     for i, src in enumerate(body.sources):
-        src_id = exe(
-            "INSERT INTO collection_sources (collection_id,label,kibana_url,sort_order) VALUES (?,?,?,?)",
-            (cid, src.label, src.kibana_url, i),
-        )
-        new_src_ids.add(src_id)
-        jid = _ensure_source_job({"label": src.label, "kibana_url": src.kibana_url, "id": src_id, "job_id": None}, coll_dict)
+        existing = existing_by_pos.get(i)
+        if existing:
+            # Update in place — preserve job_id linkage
+            exe("UPDATE collection_sources SET label=?, kibana_url=?, sort_order=? WHERE id=?",
+                (src.label, src.kibana_url, i, existing["id"]))
+            touched_src_ids.add(existing["id"])
+            jid = _ensure_source_job({**existing, "label": src.label, "kibana_url": src.kibana_url}, coll_dict)
+        else:
+            # New source
+            new_src_id = exe(
+                "INSERT INTO collection_sources (collection_id,label,kibana_url,sort_order) VALUES (?,?,?,?)",
+                (cid, src.label, src.kibana_url, i),
+            )
+            touched_src_ids.add(new_src_id)
+            jid = _ensure_source_job({"label": src.label, "kibana_url": src.kibana_url,
+                                       "id": new_src_id, "job_id": None}, coll_dict)
         job_ids.append(jid)
-    for old_id, old_src in existing_srcs.items():
-        if old_id not in new_src_ids:
-            if old_src.get("job_id"):
-                exe("DELETE FROM scrape_jobs WHERE id=?", (old_src["job_id"],))
-            exe("DELETE FROM collection_sources WHERE id=?", (old_id,))
+
+    # Remove sources that were dropped
+    for src_id in existing_ids_all - touched_src_ids:
+        old_src = next((r for r in existing_srcs if r["id"] == src_id), None)
+        if old_src and old_src.get("job_id"):
+            exe("DELETE FROM scrape_jobs WHERE id=?", (old_src["job_id"],))
+        exe("DELETE FROM collection_sources WHERE id=?", (src_id,))
 
     exe("DELETE FROM collection_corr_keys WHERE collection_id=?", (cid,))
     for field in body.corr_keys:
@@ -1093,13 +1186,8 @@ def run_collection(cid: int):
             now_src = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             exe("UPDATE scrape_jobs SET last_run_at=?, last_run_status=?, last_rows_saved=? WHERE id=?",
                 (now_src, src_status, rows_ref[0], jid))
-            src_run_log = "\n".join(
-                l for l in _run_logs[run_id]
-                if l.startswith(f"[→] Source {i}/") or "chunk" in l.lower() or "rows" in l.lower()
-            )
-            exe("INSERT INTO job_runs (job_id, status, finished_at, rows_saved, log_output) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (jid, src_status, now_src, rows_ref[0], src_run_log))
+            # B6 fix: don't insert a duplicate per-source job_runs row;
+            # the master run_id row already tracks the whole collection run.
 
         # Auto-build correlations if group has keys defined
         g = qone("SELECT id FROM log_groups WHERE collection_id=?", (cid,))
@@ -1128,6 +1216,7 @@ def run_collection(cid: int):
             (status, now, total_saved, log, run_id))
         exe("UPDATE scrape_collections SET last_run_at=?,last_run_status=? WHERE id=?",
             (now, status, cid))
+        _evict_old_runs()
 
     t = threading.Thread(target=_do_collection_run, daemon=True)
     t.start()
@@ -1620,9 +1709,14 @@ async def detect_keys_stream(gid: int, sample_size: int = Query(default=50, le=2
 
 @app.get("/api/settings")
 def get_settings():
+    import analyzer as _az
+    ai_ok = bool(_az._get_client())
+    system_prompt = (qone("SELECT value FROM ai_config WHERE key='system_prompt'") or {}).get("value", "")
     return {
-        "github_token_set":    bool(os.environ.get("GITHUB_TOKEN")),
-        "anthropic_key_set":   bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "github_token_set":  bool(os.environ.get("GITHUB_TOKEN")),
+        "anthropic_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "anthropic_ready":   ai_ok,
+        "system_prompt":     system_prompt,
     }
 
 
@@ -1635,15 +1729,301 @@ def save_keys(payload: dict):
         updates["ANTHROPIC_API_KEY"] = payload["anthropic_key"].strip()
     if updates:
         _save_keys(updates)
-        if "ANTHROPIC_API_KEY" in updates:
-            import analyzer
-            try:
-                import anthropic as _ant
-                analyzer._client = _ant.Anthropic()
-                analyzer._available = True
-            except Exception:
-                pass
+    # Always update system prompt if provided (even without key changes)
+    if "system_prompt" in payload:
+        exe("INSERT OR REPLACE INTO ai_config (key, value) VALUES ('system_prompt', ?)",
+            (payload["system_prompt"].strip(),))
     return {"ok": True}
+
+
+# ─── Session health ────────────────────────────────────────────────────────────
+
+@app.get("/api/session/health")
+def session_health():
+    """Check whether session.json exists and roughly how old it is (F9)."""
+    session_file = SCRAPER_DIR / "session.json"
+    if not session_file.exists():
+        return {"status": "missing", "message": "No session.json — run: python3 kibana_scraper.py login <url>"}
+    age_hours = (time.time() - session_file.stat().st_mtime) / 3600
+    if age_hours > 20:
+        return {"status": "stale", "age_hours": round(age_hours, 1),
+                "message": f"Session is {round(age_hours,1)}h old — may need re-login"}
+    return {"status": "ok", "age_hours": round(age_hours, 1)}
+
+
+# ─── Export ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/jobs/{jid}/export")
+def export_job_data(
+    jid: int,
+    fmt: str = "csv",      # "csv" or "json"
+    search: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    relevance: str = "",
+    field_filters: str = "",
+    limit: int = Query(default=10000, le=50000),
+):
+    """Download filtered log data as CSV or JSON (U5)."""
+    import re as _re2, io, csv as _csv
+    conditions: list[str] = ["job_id=?"]
+    args: tuple = (jid,)
+    if search:
+        conditions.append("raw_json LIKE ?"); args += (f"%{search}%",)
+    if from_date:
+        conditions.append("timestamp >= ?"); args += (from_date,)
+    if to_date:
+        conditions.append("timestamp <= ?"); args += (to_date,)
+    if relevance:
+        conditions.append("relevance=?"); args += (relevance,)
+    if field_filters:
+        try:
+            for ff in json.loads(field_filters):
+                field = ff.get("field", "")
+                if not field or not _re2.match(r'^[A-Za-z0-9_.@\-]+$', field):
+                    continue
+                p0, p = f"$.{field}[0]", f"$.{field}"
+                coalesce = "CAST(COALESCE(json_extract(raw_json,?),json_extract(raw_json,?)) AS TEXT)"
+                if ff.get("op") == "neq":
+                    conditions.append(f"({coalesce} != ? OR json_extract(raw_json,?) IS NULL)")
+                    args += (p0, p, ff["value"], p)
+                else:
+                    conditions.append(f"{coalesce} = ?"); args += (p0, p, ff["value"])
+        except Exception:
+            pass
+
+    where = " AND ".join(conditions)
+    rows = qall(
+        f"SELECT id, timestamp, relevance, severity, ai_summary, raw_json "
+        f"FROM log_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+        args + (limit,)
+    ) or []
+
+    if fmt == "json":
+        out = []
+        for r in rows:
+            rj = r.get("raw_json") or {}
+            if isinstance(rj, str):
+                try: rj = json.loads(rj)
+                except: rj = {}
+            out.append({"id": r["id"], "timestamp": r["timestamp"],
+                        "relevance": r["relevance"], "severity": r["severity"],
+                        "ai_summary": r["ai_summary"], **rj})
+        content = json.dumps(out, indent=2, default=str)
+        return StreamingResponse(iter([content]),
+                                 media_type="application/json",
+                                 headers={"Content-Disposition": f"attachment; filename=logs_job{jid}.json"})
+
+    # CSV
+    buf = io.StringIO()
+    # Collect all field names
+    all_fields: list[str] = []
+    seen_f: set[str] = set()
+    for r in rows:
+        rj = r.get("raw_json") or {}
+        if isinstance(rj, str):
+            try: rj = json.loads(rj)
+            except: rj = {}
+        for k in rj.keys():
+            if k not in seen_f:
+                seen_f.add(k); all_fields.append(k)
+    base_cols = ["id", "timestamp", "relevance", "severity", "ai_summary"]
+    writer = _csv.DictWriter(buf, fieldnames=base_cols + all_fields, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        rj = r.get("raw_json") or {}
+        if isinstance(rj, str):
+            try: rj = json.loads(rj)
+            except: rj = {}
+        flat = {k: (v[0] if isinstance(v, list) and v else v) for k, v in rj.items()}
+        writer.writerow({**{"id": r["id"], "timestamp": r["timestamp"],
+                            "relevance": r["relevance"], "severity": r["severity"],
+                            "ai_summary": r["ai_summary"]}, **flat})
+    content = buf.getvalue()
+    return StreamingResponse(iter([content]),
+                             media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename=logs_job{jid}.csv"})
+
+
+# ─── Error clustering ─────────────────────────────────────────────────────────
+
+@app.get("/api/jobs/{jid}/clusters")
+def get_clusters(
+    jid: int,
+    limit: int = Query(default=5000, le=20000),
+    relevance: str = "",
+    field: str = "message",
+):
+    """Group logs by message pattern, return top clusters with count + sample (F1)."""
+    import re as _re3
+    conditions = ["job_id=?", f"json_extract(raw_json,'$.{field}[0]') IS NOT NULL OR json_extract(raw_json,'$.{field}') IS NOT NULL"]
+    args: tuple = (jid,)
+    if relevance:
+        conditions.append("relevance=?"); args += (relevance,)
+    where = " AND ".join(conditions)
+    rows = qall(
+        f"SELECT id, timestamp, relevance, severity, ai_summary, "
+        f"CAST(COALESCE(json_extract(raw_json,'$.{field}[0]'),json_extract(raw_json,'$.{field}')) AS TEXT) AS msg_val "
+        f"FROM log_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+        args + (limit,)
+    ) or []
+
+    def _normalize(msg: str) -> str:
+        """Strip highly variable parts to cluster similar messages."""
+        s = str(msg or "")
+        s = _re3.sub(r'\b[0-9a-f]{8,}\b', 'HEX', s, flags=_re3.I)   # hex IDs
+        s = _re3.sub(r'\b\d{4,}\b', 'NUM', s)                          # long numbers
+        s = _re3.sub(r'https?://[^\s]+', 'URL', s)                     # URLs
+        s = _re3.sub(r'\b[\w.+-]+@[\w.]+\b', 'EMAIL', s)               # emails
+        s = _re3.sub(r'\s+', ' ', s).strip()
+        return s[:200]
+
+    from collections import defaultdict as _dd
+    clusters: dict = _dd(lambda: {"count": 0, "sample_id": None, "sample_ts": None,
+                                   "sample_msg": None, "severity": "info",
+                                   "sample_summary": None})
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+    for r in rows:
+        key = _normalize(r.get("msg_val", ""))
+        if not key:
+            continue
+        cl = clusters[key]
+        cl["count"] += 1
+        sev = r.get("severity") or "info"
+        if sev_rank.get(sev, 0) >= sev_rank.get(cl["severity"], 0):
+            cl["severity"] = sev
+        if cl["sample_id"] is None:
+            cl["sample_id"]      = r["id"]
+            cl["sample_ts"]      = r.get("timestamp")
+            cl["sample_msg"]     = r.get("msg_val", "")[:300]
+            cl["sample_summary"] = r.get("ai_summary")
+        cl["pattern"] = key
+
+    result = sorted(clusters.values(), key=lambda x: -x["count"])
+    return {"clusters": result[:200], "total_rows": len(rows)}
+
+
+# ─── DB maintenance ───────────────────────────────────────────────────────────
+
+@app.get("/api/db/stats")
+def db_stats():
+    """Return DB file size, row counts per job, and run log sizes (F6)."""
+    size_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+    job_counts = qall(
+        "SELECT sj.id, sj.name, COUNT(le.id) as rows, "
+        "SUM(CASE WHEN le.relevance='relevant' THEN 1 ELSE 0 END) as relevant_rows, "
+        "SUM(CASE WHEN le.relevance IS NULL OR le.relevance='unchecked' THEN 1 ELSE 0 END) as unanalyzed "
+        "FROM scrape_jobs sj LEFT JOIN log_events le ON le.job_id=sj.id "
+        "GROUP BY sj.id ORDER BY rows DESC"
+    ) or []
+    run_log_size = qone("SELECT SUM(LENGTH(log_output)) as s FROM job_runs") or {}
+    return {
+        "db_size_mb": round(size_bytes / 1_048_576, 2),
+        "jobs": job_counts,
+        "run_log_kb": round((run_log_size.get("s") or 0) / 1024, 1),
+        "total_events": (qone("SELECT COUNT(*) c FROM log_events") or {}).get("c", 0),
+    }
+
+
+@app.post("/api/db/vacuum")
+def db_vacuum():
+    """Run VACUUM to reclaim space and rebuild indexes."""
+    try:
+        from db import _db as _get_db
+        conn = _get_db()
+        conn.execute("VACUUM")
+        conn.commit()
+        size_after = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+        return {"ok": True, "db_size_mb": round(size_after / 1_048_576, 2)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/db/prune-runs")
+def prune_run_logs(keep: int = Query(default=10)):
+    """Remove log_output from old job_runs, keeping the N most recent per job (D3)."""
+    jobs = qall("SELECT id FROM scrape_jobs") or []
+    pruned = 0
+    for j in jobs:
+        old_ids = qall(
+            "SELECT id FROM job_runs WHERE job_id=? ORDER BY id DESC LIMIT -1 OFFSET ?",
+            (j["id"], keep)
+        ) or []
+        for r in old_ids:
+            exe("UPDATE job_runs SET log_output=NULL WHERE id=?", (r["id"],))
+            pruned += 1
+    return {"ok": True, "pruned": pruned}
+
+
+# ─── Saved searches ───────────────────────────────────────────────────────────
+
+class SavedSearchIn(BaseModel):
+    job_id:       int   = None
+    name:         str
+    search:       str   = ""
+    from_date:    str   = ""
+    to_date:      str   = ""
+    relevance:    str   = ""
+    field_filters:str   = "[]"
+    sort_by:      str   = "timestamp"
+    sort_dir:     str   = "desc"
+    is_preset:    bool  = False
+
+
+@app.get("/api/saved-searches")
+def list_saved_searches(job_id: int = None):
+    if job_id:
+        return qall("SELECT * FROM saved_searches WHERE job_id=? OR job_id IS NULL ORDER BY name", (job_id,)) or []
+    return qall("SELECT * FROM saved_searches ORDER BY name") or []
+
+
+@app.post("/api/saved-searches", status_code=201)
+def create_saved_search(body: SavedSearchIn):
+    sid = exe(
+        "INSERT INTO saved_searches (job_id,name,search,from_date,to_date,relevance,"
+        "field_filters,sort_by,sort_dir,is_preset) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (body.job_id, body.name, body.search, body.from_date, body.to_date,
+         body.relevance, body.field_filters, body.sort_by, body.sort_dir, int(body.is_preset))
+    )
+    return {"id": sid}
+
+
+@app.delete("/api/saved-searches/{sid}")
+def delete_saved_search(sid: int):
+    exe("DELETE FROM saved_searches WHERE id=?", (sid,))
+    return {"ok": True}
+
+
+# ─── Log tags ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/logs/{log_id}/tags")
+def get_log_tags(log_id: int):
+    return [r["tag"] for r in (qall("SELECT tag FROM log_tags WHERE log_id=? ORDER BY tag", (log_id,)) or [])]
+
+
+@app.post("/api/logs/{log_id}/tags")
+def add_log_tag(log_id: int, payload: dict):
+    tag = (payload.get("tag") or "").strip()[:50]
+    if not tag:
+        raise HTTPException(400, "tag required")
+    exe("INSERT OR IGNORE INTO log_tags (log_id, tag) VALUES (?,?)", (log_id, tag))
+    return {"ok": True}
+
+
+@app.delete("/api/logs/{log_id}/tags/{tag}")
+def remove_log_tag(log_id: int, tag: str):
+    exe("DELETE FROM log_tags WHERE log_id=? AND tag=?", (log_id, tag))
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/tags")
+def list_job_tags(jid: int):
+    """Return all distinct tags used across a job's logs, with counts."""
+    return qall(
+        "SELECT lt.tag, COUNT(*) as count FROM log_tags lt "
+        "JOIN log_events le ON le.id=lt.log_id WHERE le.job_id=? "
+        "GROUP BY lt.tag ORDER BY count DESC", (jid,)
+    ) or []
 
 
 # ─── Log marking endpoints ─────────────────────────────────────────────────────

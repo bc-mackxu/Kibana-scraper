@@ -570,6 +570,58 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 .linked-val { color:var(--blue); font-style:italic; }
 .linked-col-hdr { color:var(--blue); font-size:10px; }
 
+/* ── Health badge ── */
+.health-ok   { display:inline-flex; align-items:center; gap:5px; background:rgba(63,185,80,.12); border:1px solid rgba(63,185,80,.3); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--green); }
+.health-warn { display:inline-flex; align-items:center; gap:5px; background:rgba(255,166,87,.12); border:1px solid rgba(255,166,87,.3); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--orange); }
+.health-err  { display:inline-flex; align-items:center; gap:5px; background:rgba(248,81,73,.12); border:1px solid rgba(248,81,73,.3); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--red); }
+
+/* ── Quick filter presets ── */
+.preset-row { display:flex; align-items:center; gap:5px; padding:5px 12px; border-bottom:1px solid var(--border-subtle); flex-wrap:wrap; }
+.preset-label { font-size:10px; color:var(--tx2); font-weight:700; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+.preset-btn {
+  padding:2px 9px; border-radius:12px; font-size:11px; font-weight:500;
+  cursor:pointer; border:1px solid var(--border); color:var(--tx1);
+  background:transparent; transition:all .15s; white-space:nowrap;
+}
+.preset-btn:hover { background:var(--bg3); color:var(--tx0); border-color:var(--tx1); }
+
+/* ── Saved searches ── */
+.saved-search-row { display:flex; align-items:center; gap:6px; padding:6px 10px; border-bottom:1px solid var(--border-subtle); font-size:12px; }
+.saved-search-row:hover { background:var(--bg2); }
+.saved-search-name { flex:1; font-weight:500; color:var(--tx0); cursor:pointer; }
+.saved-search-name:hover { color:var(--blue); }
+.saved-search-meta { font-size:10px; color:var(--tx2); }
+
+/* ── Empty state ── */
+.empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:50px 20px; gap:12px; text-align:center; color:var(--tx2); }
+.empty-state-icon { font-size:36px; opacity:.4; }
+.empty-state h3 { font-size:14px; font-weight:600; color:var(--tx1); }
+.empty-state p  { font-size:12px; max-width:300px; line-height:1.6; }
+
+/* ── Dashboard (welcome screen) ── */
+.dashboard { flex:1; overflow-y:auto; padding:20px; display:grid; grid-template-columns:1fr 1fr 1fr; grid-template-rows:auto auto; gap:16px; }
+.dash-card { background:var(--bg1); border:1px solid var(--border); border-radius:var(--radius-lg); padding:16px; display:flex; flex-direction:column; gap:10px; }
+.dash-card-full { grid-column:1 / -1; }
+.dash-card-half { grid-column:span 2; }
+.dash-stat-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--tx2); }
+.dash-stat-value { font-size:28px; font-weight:700; color:var(--tx0); line-height:1; }
+.dash-stat-sub   { font-size:11px; color:var(--tx2); }
+.dash-run-item { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-subtle); font-size:12px; }
+.dash-run-item:last-child { border-bottom:none; }
+.dash-sev-bar { display:flex; height:6px; border-radius:3px; overflow:hidden; gap:1px; }
+.dash-sev-seg { height:100%; min-width:2px; border-radius:1px; }
+.dash-job-btn { cursor:pointer; padding:2px 0; color:var(--blue); text-decoration:none; font-size:12px; font-weight:500; background:none; border:none; text-align:left; }
+.dash-job-btn:hover { text-decoration:underline; }
+
+/* ── Keyboard shortcut badge ── */
+.kbd { display:inline-block; background:var(--bg3); border:1px solid var(--border); border-radius:3px; padding:1px 5px; font-size:10px; font-family:'SF Mono',monospace; color:var(--tx2); }
+
+/* ── Cluster modal ── */
+.cluster-item { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; cursor:pointer; transition:border-color .15s; margin-bottom:6px; }
+.cluster-item:hover { border-color:var(--orange); }
+.cluster-count { display:inline-block; background:rgba(255,166,87,.15); color:var(--orange); border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; min-width:32px; text-align:center; }
+.cluster-pattern { font-size:11px; color:var(--tx1); font-family:'SF Mono',monospace; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
 /* ── Histogram ── */
 #histogram-wrap {
   padding: 8px 12px 4px;
@@ -615,9 +667,10 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
       </div>
     </div>
   </div>
+  <div id="health-badge" title="Session health" style="display:none;"></div>
   <div class="header-sep"></div>
   <button class="btn btn-ghost btn-sm" onclick="openGroupModal()" title="Log Correlation Groups">🔗 Groups</button>
-  <button class="btn btn-ghost btn-sm" onclick="openSettings()" id="btn-settings">⚙ Keys</button>
+  <button class="btn btn-ghost btn-sm" onclick="openSettings()" id="btn-settings">⚙ Settings</button>
   <button class="btn btn-green btn-sm" onclick="openAddJob()">+ Add Job</button>
 </header>
 
@@ -634,12 +687,42 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
   <!-- ── Main ── -->
   <main id="main">
 
-    <!-- Welcome -->
-    <div class="welcome" id="welcome">
-      <div class="welcome-icon">📊</div>
-      <h2>No job selected</h2>
-      <p>Add a Kibana Discover URL to start collecting logs.</p>
-      <button class="btn btn-green" onclick="openAddJob()">+ Add your first job</button>
+    <!-- Dashboard home -->
+    <div id="welcome" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+      <div class="dashboard" id="dashboard-grid">
+        <!-- Stat cards row -->
+        <div class="dash-card">
+          <div class="dash-stat-title">Total Jobs</div>
+          <div class="dash-stat-value" id="dash-jobs">–</div>
+          <div class="dash-stat-sub" id="dash-jobs-sub"></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-stat-title">Total Log Rows</div>
+          <div class="dash-stat-value" id="dash-rows">–</div>
+          <div class="dash-stat-sub" id="dash-rows-sub"></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-stat-title">Analyzed</div>
+          <div class="dash-stat-value" id="dash-analyzed">–</div>
+          <div class="dash-stat-sub" id="dash-analyzed-sub"></div>
+        </div>
+        <!-- Severity overview + recent runs -->
+        <div class="dash-card dash-card-half">
+          <div class="dash-stat-title">Severity Overview <span style="font-weight:400;text-transform:none;letter-spacing:0;float:right;color:var(--tx2);" id="dash-sev-job-label"></span></div>
+          <div id="dash-sev-bars" style="display:flex;flex-direction:column;gap:7px;margin-top:2px;"></div>
+          <div class="dash-sev-bar" id="dash-sev-stacked" style="margin-top:4px;height:8px;border-radius:4px;overflow:hidden;gap:1px;display:flex;"></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-stat-title">Quick Access</div>
+          <div id="dash-quick-jobs" style="display:flex;flex-direction:column;gap:4px;"></div>
+          <button class="btn btn-green btn-sm" style="margin-top:8px;align-self:flex-start;" onclick="openAddJob()">+ Add Job</button>
+        </div>
+        <!-- Recent runs -->
+        <div class="dash-card dash-card-full">
+          <div class="dash-stat-title">Recent Runs</div>
+          <div id="dash-recent-runs" style="margin-top:2px;"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Job detail -->
@@ -677,8 +760,9 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 
       <!-- ── LIVE tab ── -->
       <div class="tab-pane" id="pane-live">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
-          <span style="font-size:12px;color:var(--tx1);" id="live-title">No active run</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:12px;color:var(--tx1);flex:1;" id="live-title">No active run</span>
+          <button class="btn btn-red btn-sm" id="btn-cancel-run" style="display:none;" onclick="cancelRun()">✕ Cancel</button>
           <button class="btn btn-ghost btn-sm" onclick="clearLog()">Clear</button>
         </div>
         <div class="terminal" id="terminal"></div>
@@ -717,6 +801,19 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
             <button class="btn btn-sm btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--tx2);" onclick="clearSelection()">✕ Clear</button>
           </div>
 
+          <!-- Quick filter presets -->
+          <div class="preset-row" id="preset-row">
+            <span class="preset-label">Quick:</span>
+            <button class="preset-btn" onclick="applyPreset('errors500')">500 Errors</button>
+            <button class="preset-btn" onclick="applyPreset('critical')">🔴 Critical</button>
+            <button class="preset-btn" onclick="applyPreset('unanalyzed')">• Unanalyzed</button>
+            <button class="preset-btn" onclick="applyPreset('last1h')">Last 1h</button>
+            <button class="preset-btn" onclick="applyPreset('last24h')">Last 24h</button>
+            <div class="toolbar-sep"></div>
+            <button class="preset-btn" id="btn-save-search" onclick="openSaveSearch()" title="Save current filters as a named search">💾 Save Search</button>
+            <button class="preset-btn" id="btn-load-search" onclick="openLoadSearch()" title="Load a saved search">📂 Saved</button>
+          </div>
+
           <!-- Toolbar row 2: relevance filters + analyze -->
           <div class="data-toolbar-row">
             <div class="rel-pills">
@@ -728,7 +825,7 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
             <div class="spacer"></div>
             <span class="analyze-status-text" id="analyze-status" style="display:none;"></span>
             <div class="analyze-wrap">
-              <button class="btn btn-purple btn-sm" id="btn-analyze" onclick="startAnalysis()">🤖 Analyze with AI</button>
+              <button class="btn btn-purple btn-sm" id="btn-analyze" onclick="startAnalysis()">🤖 Analyze</button>
               <div class="analyze-progress-bar" id="analyze-pbar">
                 <div class="analyze-bar-fill" id="analyze-bar-fill" style="width:0%"></div>
               </div>
@@ -742,8 +839,10 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
               </div>
             </div>
             <div class="toolbar-sep"></div>
-            <button class="btn btn-ghost btn-sm" onclick="refreshData()" title="Refresh">↻ Refresh</button>
-            <button class="btn btn-ghost btn-sm" id="btn-summary" onclick="showSummary()">📋 Summary</button>
+            <button class="btn btn-ghost btn-sm" onclick="refreshData()" title="Refresh (r)">↻</button>
+            <button class="btn btn-ghost btn-sm" id="btn-summary" onclick="showSummary()" title="AI Summary">📋</button>
+            <button class="btn btn-ghost btn-sm" onclick="openClusters()" title="Error Clusters">🔷 Clusters</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportData()" title="Export CSV/JSON">⬇ Export</button>
           </div>
         </div>
 
@@ -863,9 +962,9 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 
 <!-- ── Settings Modal ── -->
 <div class="modal-overlay" id="gh-modal">
-  <div class="modal-box">
-    <div class="modal-title">⚙ API Keys</div>
-    <p class="modal-subtitle">Saved locally to <code style="background:var(--bg2);padding:1px 5px;border-radius:3px;font-size:11px;">keys.json</code> — never leave your machine.</p>
+  <div class="modal-box" style="width:540px;">
+    <div class="modal-title">⚙ Settings</div>
+    <p class="modal-subtitle">Keys saved locally to <code style="background:var(--bg2);padding:1px 5px;border-radius:3px;font-size:11px;">keys.json</code> — never leave your machine.</p>
     <div class="form-field">
       <label class="form-label">
         Anthropic API Key
@@ -880,9 +979,17 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
       </label>
       <input class="form-input" id="gh-token-input" type="password" placeholder="ghp_…" />
     </div>
+    <div class="form-field">
+      <label class="form-label">AI System Prompt <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(optional — overrides default)</span></label>
+      <textarea class="form-input" id="system-prompt-input" rows="3" placeholder="You are analyzing BigCommerce production logs to find checkout/payment issues." style="resize:vertical;font-size:12px;line-height:1.5;"></textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--tx2);">
+      <span>⌨</span>
+      <span>Keyboard shortcuts: <span class="kbd">/</span> search &nbsp; <span class="kbd">r</span> run &nbsp; <span class="kbd">a</span> analyze &nbsp; <span class="kbd">n</span>/<span class="kbd">p</span> page &nbsp; <span class="kbd">?</span> help</span>
+    </div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="document.getElementById('gh-modal').classList.remove('open')">Cancel</button>
-      <button class="btn btn-green" onclick="saveApiKeys()">Save Keys</button>
+      <button class="btn btn-green" onclick="saveApiKeys()">Save</button>
     </div>
   </div>
 </div>
@@ -984,6 +1091,88 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
   </div>
 </div>
 
+<!-- ── Saved Searches modal ── -->
+<div class="modal-overlay" id="saved-search-modal">
+  <div class="modal-box" style="width:520px;">
+    <div class="modal-title">💾 Saved Searches</div>
+    <div id="save-search-form" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+      <div class="form-field">
+        <label class="form-label">Save current filters as</label>
+        <div style="display:flex;gap:8px;">
+          <input class="form-input" id="save-search-name" placeholder="e.g. 500 errors last week" style="flex:1;" onkeydown="if(event.key==='Enter') saveSearch()" />
+          <button class="btn btn-green btn-sm" onclick="saveSearch()">Save</button>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);margin-bottom:6px;">Saved Searches</div>
+    <div id="saved-searches-list" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);">
+      <div style="padding:14px;color:var(--tx2);font-size:12px;">Loading…</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('saved-search-modal').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Export modal ── -->
+<div class="modal-overlay" id="export-modal">
+  <div class="modal-box" style="width:420px;">
+    <div class="modal-title">⬇ Export Data</div>
+    <p style="font-size:12px;color:var(--tx2);margin-top:-10px;">Exports all rows matching current filters (up to 10,000).</p>
+    <div class="form-field">
+      <label class="form-label">Format</label>
+      <select class="form-input" id="export-format">
+        <option value="csv">CSV</option>
+        <option value="json">JSON</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Include</label>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="export-inc-ai" checked style="accent-color:var(--blue);"> AI analysis (relevance, severity, summary)</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="export-inc-raw"> Raw JSON fields</label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('export-modal').classList.remove('open')">Cancel</button>
+      <button class="btn btn-blue" onclick="doExport()">Download</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Clusters modal ── -->
+<div class="modal-overlay" id="clusters-modal">
+  <div class="modal-box" style="width:600px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+    <div class="modal-title">🔷 Error Clusters</div>
+    <p style="font-size:12px;color:var(--tx2);margin-top:-10px;">Groups of similar error messages found in the current view.</p>
+    <div id="clusters-list" style="flex:1;overflow-y:auto;margin-top:4px;"></div>
+    <div class="form-actions" style="padding-top:12px;border-top:1px solid var(--border);margin-top:8px;">
+      <button class="btn btn-ghost" onclick="document.getElementById('clusters-modal').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Keyboard shortcuts help modal ── -->
+<div class="modal-overlay" id="shortcuts-modal">
+  <div class="modal-box" style="width:400px;">
+    <div class="modal-title">⌨ Keyboard Shortcuts</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:12px;align-items:center;">
+      <span class="kbd">/</span><span>Focus search box</span>
+      <span class="kbd">r</span><span>Run current job</span>
+      <span class="kbd">a</span><span>Analyze with AI</span>
+      <span class="kbd">n</span><span>Next page</span>
+      <span class="kbd">p</span><span>Previous page</span>
+      <span class="kbd">d</span><span>Switch to Data tab</span>
+      <span class="kbd">l</span><span>Switch to Live Log tab</span>
+      <span class="kbd">Esc</span><span>Close modal / clear search focus</span>
+      <span class="kbd">?</span><span>Show this help</span>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('shortcuts-modal').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
 let jobs = [], selJobId = null, editJobId = null;
@@ -1014,10 +1203,28 @@ const PRIORITY_FIELDS = [
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   await Promise.all([loadStats(), loadJobs()]);
-  setInterval(loadStats, 10_000);
-  setInterval(() => { if (selJobId) loadRuns(selJobId); }, 8_000);
-  // loadJobs already calls loadCollections internally — refreshes ALL sidebar dots
-  setInterval(loadJobs, 5_000);
+  loadDashboard();
+  checkHealth();
+  setInterval(checkHealth, 30_000);
+  // B4 fix: single adaptive polling loop instead of two overlapping intervals
+  _startSmartPoll();
+}
+
+// P4: Smart polling — fast (2s) when any run is active, slow (10s) when idle
+let _pollTimer = null;
+function _anyRunning() {
+  return Object.keys(activeESes_).length > 0 ||
+         jobs.some(j => j.is_running) ||
+         (collections_ || []).some(c => (c.sources||[]).some(s => s.is_running));
+}
+function _startSmartPoll() {
+  if (_pollTimer) clearTimeout(_pollTimer);
+  const delay = _anyRunning() ? 2000 : 10_000;
+  _pollTimer = setTimeout(async () => {
+    await Promise.all([loadStats(), loadJobs()]);
+    if (selJobId) loadRuns(selJobId);
+    _startSmartPoll();  // reschedule
+  }, delay);
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1037,6 +1244,18 @@ async function loadStats() {
   if (!selJobId) {
     document.getElementById('s-rows').textContent = (s.total_rows||0).toLocaleString();
     document.getElementById('rows-chip').title = 'Total rows across all jobs';
+  }
+  // Update dashboard stat cards if visible
+  const jEl = document.getElementById('dash-jobs');
+  const rEl = document.getElementById('dash-rows');
+  const aEl = document.getElementById('dash-analyzed');
+  if (jEl) jEl.textContent = (s.total_jobs||0).toLocaleString();
+  if (rEl) rEl.textContent = (s.total_rows||0).toLocaleString();
+  if (aEl && s.total_rows) {
+    const pct = Math.round((s.analyzed_rows||0) / s.total_rows * 100);
+    aEl.textContent = pct + '%';
+    const aSubEl = document.getElementById('dash-analyzed-sub');
+    if (aSubEl) aSubEl.textContent = `${(s.analyzed_rows||0).toLocaleString()} of ${s.total_rows.toLocaleString()} rows`;
   }
 }
 
@@ -1072,6 +1291,8 @@ async function loadJobs() {
     const j = jobs.find(j=>j.id===selJobId);
     if (j) updateDetailHeader(j);
   }
+  // Refresh dashboard when home screen visible
+  if (!selJobId && !selCollId) loadDashboard();
 }
 
 function renderSidebar(collJobIds) {
@@ -1355,6 +1576,12 @@ function streamRun(runId, jobId) {
   const es = new EventSource(`/api/runs/${runId}/stream`);
   activeESes_[jobId] = es;
 
+  // Show cancel button while streaming
+  _dom(() => {
+    const cancelBtn = document.getElementById('btn-cancel-run');
+    if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+  });
+
   es.onmessage=e=>{
     const d=JSON.parse(e.data);
     if (d.type==='log') {
@@ -1369,6 +1596,8 @@ function streamRun(runId, jobId) {
       es.close();
       delete activeESes_[jobId];
       _dom(()=>{
+        const cancelBtn = document.getElementById('btn-cancel-run');
+        if (cancelBtn) cancelBtn.style.display = 'none';
         const runId2=activeRunIds_[jobId];
         document.getElementById('live-title').textContent=`Run #${runId2} — ${d.status}`;
         const done=document.getElementById('log-done');
@@ -1377,11 +1606,31 @@ function streamRun(runId, jobId) {
         done.style.display='block';
       });
       loadJobs(); loadRuns(jobId === selJobId ? selJobId : null);
+      _startSmartPoll(); // speed ramp-down now that run finished
     }
   };
   es.onerror=()=>{
-    _dom(()=>{ document.getElementById('live-title').textContent=`Run #${runId} — connection closed`; });
+    _dom(()=>{
+      document.getElementById('live-title').textContent=`Run #${runId} — connection closed`;
+      const cancelBtn = document.getElementById('btn-cancel-run');
+      if (cancelBtn) cancelBtn.style.display = 'none';
+    });
   };
+}
+
+// F7: Cancel the active run for selJobId
+async function cancelRun() {
+  const runId = activeRunIds_[selJobId];
+  if (!runId) return;
+  if (!confirm(`Cancel run #${runId}?`)) return;
+  try {
+    await api.post(`/api/runs/${runId}/cancel`, {});
+    showToast('✕', 'Cancelling…', `Sent cancel signal to run #${runId}`, 50);
+    hideToast(3000);
+  } catch(e) {
+    showToast('!', 'Cancel failed', String(e), 0);
+    hideToast(4000);
+  }
 }
 
 // Reconnect Live Log to whichever run is active for a job (called on tab/job switch)
@@ -1433,15 +1682,16 @@ function toggleFieldPanel() {
   btn.title = fieldPanelCollapsed_ ? 'Expand' : 'Collapse';
 }
 
-const LS_FIELDS_KEY = 'kibana_scraper_selected_fields';
+// B1: per-job column persistence — key includes job ID
+function _lsFieldsKey() { return `kibana_cols_${selJobId || 'default'}`; }
 
 function _saveFieldsToLS() {
-  try { localStorage.setItem(LS_FIELDS_KEY, JSON.stringify([...dataSelectedFields_])); } catch(e) {}
+  try { localStorage.setItem(_lsFieldsKey(), JSON.stringify([...dataSelectedFields_])); } catch(e) {}
 }
 
 function _loadFieldsFromLS(available) {
   try {
-    const saved = JSON.parse(localStorage.getItem(LS_FIELDS_KEY) || 'null');
+    const saved = JSON.parse(localStorage.getItem(_lsFieldsKey()) || 'null');
     if (Array.isArray(saved) && saved.length) {
       const fset = new Set(available);
       // Keep own fields that still exist + all linked fields (they have LINKED_SEP)
@@ -2147,22 +2397,31 @@ function startAutoClassify() {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 async function openSettings() {
-  const s=await api.get('/api/settings');
-  document.getElementById('ak-status').textContent=s.anthropic_key_set?'✓ set':'';
-  document.getElementById('gh-status').textContent=s.github_token_set?'✓ set':'';
-  document.getElementById('btn-settings').style.borderColor=!s.anthropic_key_set?'var(--orange)':'';
+  const s = await api.get('/api/settings');
+  document.getElementById('ak-status').textContent = s.anthropic_key_set ? '✓ set' : '';
+  document.getElementById('gh-status').textContent = s.github_token_set ? '✓ set' : '';
+  document.getElementById('btn-settings').style.borderColor = !s.anthropic_key_set ? 'var(--orange)' : '';
+  // Load current system prompt
+  try {
+    const cfg = await api.get('/api/settings');
+    document.getElementById('system-prompt-input').value = cfg.system_prompt || '';
+  } catch(e) {}
   document.getElementById('gh-modal').classList.add('open');
 }
 
 async function saveApiKeys() {
-  const ak=document.getElementById('anthropic-key-input').value.trim();
-  const gh=document.getElementById('gh-token-input').value.trim();
-  if (!ak&&!gh){document.getElementById('gh-modal').classList.remove('open');return;}
-  await api.post('/api/settings/keys',{anthropic_key:ak,github_token:gh});
+  const ak = document.getElementById('anthropic-key-input').value.trim();
+  const gh = document.getElementById('gh-token-input').value.trim();
+  const sp = document.getElementById('system-prompt-input').value.trim();
+  const payload = { anthropic_key: ak, github_token: gh };
+  if (sp) payload.system_prompt = sp;
+  await api.post('/api/settings/keys', payload);
   document.getElementById('gh-modal').classList.remove('open');
-  document.getElementById('anthropic-key-input').value='';
-  document.getElementById('gh-token-input').value='';
-  document.getElementById('btn-settings').style.borderColor='';
+  document.getElementById('anthropic-key-input').value = '';
+  document.getElementById('gh-token-input').value = '';
+  document.getElementById('btn-settings').style.borderColor = '';
+  showToast('✓', 'Saved', 'Settings saved', 100);
+  hideToast(2500);
 }
 
 // ── Config form ───────────────────────────────────────────────────────────────
@@ -2838,8 +3097,11 @@ function removeFieldFilter(idx) {
 }
 
 // ── Modal close on backdrop ───────────────────────────────────────────────────
-['modal','gh-modal','coderef-modal','similar-modal','summary-modal','group-modal'].forEach(id=>{
-  document.getElementById(id).addEventListener('click', e=>{
+['modal','gh-modal','coderef-modal','similar-modal','summary-modal','group-modal',
+ 'saved-search-modal','export-modal','clusters-modal','shortcuts-modal'].forEach(id=>{
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('click', e=>{
     if(e.target.id===id) {
       if (id==='modal') closeModal();
       else {
@@ -3146,6 +3408,424 @@ function toggleCorrPanel(rowId) {
     loadCorrelated(rowId, `corr-content-${rowId}`);
   }
 }
+
+// ── F9: Session health check ──────────────────────────────────────────────────
+async function checkHealth() {
+  const el = document.getElementById('health-badge');
+  if (!el) return;
+  try {
+    const h = await api.get('/api/session/health');
+    el.style.display = 'inline-flex';
+    if (h.status === 'ok') {
+      el.className = 'health-ok';
+      el.textContent = `● Session OK (${h.age_hours}h)`;
+    } else if (h.status === 'stale') {
+      el.className = 'health-warn';
+      el.innerHTML = `⚠ ${esc(h.message || 'Session may be stale')}`;
+    } else {
+      el.className = 'health-err';
+      el.innerHTML = `✗ ${esc(h.message || 'No session — run login')}`;
+    }
+  } catch(e) {
+    el.style.display = 'inline-flex';
+    el.className = 'health-err';
+    el.textContent = '✗ Server unreachable';
+  }
+}
+
+// ── U2: Dashboard ─────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const s = await api.get('/api/stats');
+    const jCount = s.total_jobs || 0;
+    const rCount = s.total_rows || 0;
+    const analyzed = s.analyzed_rows || 0;
+    const pct = rCount ? Math.round(analyzed / rCount * 100) : 0;
+
+    const jEl = document.getElementById('dash-jobs');
+    const rEl = document.getElementById('dash-rows');
+    const aEl = document.getElementById('dash-analyzed');
+    if (jEl) jEl.textContent = jCount.toLocaleString();
+    if (rEl) rEl.textContent = rCount.toLocaleString();
+    if (aEl) { aEl.textContent = pct + '%'; }
+    const aSubEl = document.getElementById('dash-analyzed-sub');
+    if (aSubEl) aSubEl.textContent = `${analyzed.toLocaleString()} of ${rCount.toLocaleString()} rows`;
+    const jSubEl = document.getElementById('dash-jobs-sub');
+    if (jSubEl) {
+      const cols = (collections_ || []).length;
+      jSubEl.textContent = cols ? `${cols} collection${cols!==1?'s':''}` : 'No collections yet';
+    }
+
+    // Severity bars
+    const sevBarsEl = document.getElementById('dash-sev-bars');
+    const sevStacked = document.getElementById('dash-sev-stacked');
+    if (sevBarsEl && s.severity_counts) {
+      const sc = s.severity_counts;
+      const total = Object.values(sc).reduce((a, b) => a + b, 0) || 1;
+      const sevs = [
+        {k:'critical', color:'var(--red)',    label:'Critical'},
+        {k:'high',     color:'var(--orange)', label:'High'},
+        {k:'medium',   color:'var(--yellow)', label:'Medium'},
+        {k:'low',      color:'var(--blue)',   label:'Low'},
+        {k:'info',     color:'var(--tx2)',    label:'Info'},
+      ];
+      sevBarsEl.innerHTML = sevs.filter(s => sc[s.k]).map(({k, color, label}) => {
+        const cnt = sc[k] || 0;
+        const pct = Math.round(cnt / total * 100);
+        return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;">
+          <span style="width:52px;color:${color};font-weight:600;">${label}</span>
+          <div style="flex:1;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:${color};border-radius:2px;transition:width .4s;"></div>
+          </div>
+          <span style="color:var(--tx2);width:48px;text-align:right;">${cnt.toLocaleString()}</span>
+        </div>`;
+      }).join('');
+      if (sevStacked) sevStacked.innerHTML = sevs.filter(s => sc[s.k]).map(({k, color}) => {
+        const pct = Math.round((sc[k]||0) / total * 100);
+        return `<div style="flex:${pct};background:${color};min-width:2px;"></div>`;
+      }).join('');
+    }
+
+    // Quick access — top 5 jobs
+    const qaEl = document.getElementById('dash-quick-jobs');
+    if (qaEl && jobs.length) {
+      qaEl.innerHTML = jobs.slice(0, 5).map(j =>
+        `<button class="dash-job-btn" onclick="selectJob(${j.id})">${esc(j.name)}</button>`
+      ).join('');
+    } else if (qaEl) {
+      qaEl.innerHTML = '<span style="color:var(--tx2);font-size:12px;">No jobs yet</span>';
+    }
+
+    // Recent runs across all jobs
+    await loadDashboardRecentRuns();
+  } catch(e) { /* non-critical */ }
+}
+
+async function loadDashboardRecentRuns() {
+  const el = document.getElementById('dash-recent-runs');
+  if (!el || !jobs.length) return;
+  try {
+    // Fetch runs for first few jobs in parallel
+    const jobsToCheck = jobs.slice(0, 6);
+    const allRuns = (await Promise.all(
+      jobsToCheck.map(j => api.get(`/api/jobs/${j.id}/runs`).then(runs =>
+        runs.map(r => ({...r, _jobName: j.name, _jobId: j.id}))
+      ).catch(() => []))
+    )).flat();
+    allRuns.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+    const recent = allRuns.slice(0, 8);
+    if (!recent.length) {
+      el.innerHTML = '<div style="color:var(--tx2);font-size:12px;">No runs yet. Select a job and click ▶ Run Now to start.</div>';
+      return;
+    }
+    el.innerHTML = recent.map(r => {
+      const dur = r.finished_at ? elapsed(r.started_at, r.finished_at) : 'running…';
+      const statusCls = r.status === 'success' ? 'badge-success' : r.status === 'running' ? 'badge-running' : 'badge-failed';
+      return `<div class="dash-run-item">
+        <span class="badge ${statusCls}">${r.status}</span>
+        <button class="dash-job-btn" onclick="selectJob(${r._jobId})">${esc(r._jobName)}</button>
+        <span style="color:var(--tx2);font-size:11px;flex:1;">${fmtDate(r.started_at)}</span>
+        <span style="color:var(--tx2);font-size:11px;">${dur}</span>
+        ${r.rows_saved > 0 ? `<span style="color:var(--green);font-size:11px;">+${r.rows_saved}</span>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) { /* ignore */ }
+}
+
+// ── U4: Quick filter presets ──────────────────────────────────────────────────
+function applyPreset(name) {
+  // Clear existing filters first
+  document.getElementById('data-search').value = '';
+  document.getElementById('data-from').value = '';
+  document.getElementById('data-to').value = '';
+  fieldFilters_ = [];
+  relFilter_ = '';
+  // Reset rel pill to "All"
+  ['all','relevant','irrelevant','unchecked'].forEach(k => {
+    const el = document.getElementById('rpill-' + k);
+    if (el) el.className = 'rel-pill' + (k === 'all' ? ' active' : '');
+  });
+
+  const now = new Date();
+  const isoLocal = d => d.toISOString().slice(0, 16);
+
+  if (name === 'errors500') {
+    fieldFilters_ = [{ field: 'http_status_code', op: 'eq', value: '500' }];
+  } else if (name === 'critical') {
+    fieldFilters_ = [{ field: 'severity', op: 'eq', value: 'critical' }];
+    relFilter_ = 'relevant';
+    // Update rel pills manually since we already cleared them above
+    const relPillMap = {all:'',relevant:'active-green',irrelevant:'active-red',unchecked:'active-orange'};
+    Object.entries(relPillMap).forEach(([k,cls])=>{
+      const e = document.getElementById('rpill-'+k);
+      if (e) e.className = 'rel-pill' + (k==='relevant' ? ' '+cls : '');
+    });
+  } else if (name === 'unanalyzed') {
+    setRelFilter('unchecked');
+    return;
+  } else if (name === 'last1h') {
+    const from = new Date(now - 3600_000);
+    document.getElementById('data-from').value = isoLocal(from);
+    document.getElementById('data-to').value = isoLocal(now);
+  } else if (name === 'last24h') {
+    const from = new Date(now - 86400_000);
+    document.getElementById('data-from').value = isoLocal(from);
+    document.getElementById('data-to').value = isoLocal(now);
+  }
+
+  renderExcludeChips();
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// ── U3: Saved searches ────────────────────────────────────────────────────────
+function openSaveSearch() {
+  document.getElementById('save-search-name').value = '';
+  loadSavedSearches();
+  document.getElementById('saved-search-modal').classList.add('open');
+}
+
+function openLoadSearch() {
+  document.getElementById('save-search-name').value = '';
+  loadSavedSearches();
+  document.getElementById('saved-search-modal').classList.add('open');
+}
+
+async function loadSavedSearches() {
+  const el = document.getElementById('saved-searches-list');
+  el.innerHTML = '<div style="padding:12px;color:var(--tx2);font-size:12px;">Loading…</div>';
+  try {
+    const params = new URLSearchParams();
+    if (selJobId) params.set('job_id', selJobId);
+    const list = await api.get(`/api/saved-searches?${params}`);
+    if (!list.length) {
+      el.innerHTML = '<div style="padding:12px;color:var(--tx2);font-size:12px;">No saved searches yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(s => {
+      const parts = [];
+      if (s.search) parts.push(`"${esc(s.search)}"`);
+      if (s.relevance) parts.push(s.relevance);
+      if (s.from_date || s.to_date) parts.push(`${s.from_date||''}…${s.to_date||''}`);
+      return `<div class="saved-search-row">
+        <span class="saved-search-name" onclick="applySavedSearch(${s.id})">${esc(s.name)}</span>
+        <span class="saved-search-meta">${parts.join(' · ')}</span>
+        <button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red);background:none;border:none;cursor:pointer;" onclick="deleteSavedSearch(${s.id})">✕</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="padding:12px;color:var(--red);font-size:12px;">Error loading searches</div>`;
+  }
+}
+
+async function saveSearch() {
+  const name = document.getElementById('save-search-name').value.trim();
+  if (!name) { alert('Please enter a name'); return; }
+  const search   = document.getElementById('data-search')?.value.trim() || '';
+  const fromDate = document.getElementById('data-from')?.value || '';
+  const toDate   = document.getElementById('data-to')?.value || '';
+  try {
+    await api.post('/api/saved-searches', {
+      job_id: selJobId || null,
+      name,
+      search,
+      from_date: fromDate,
+      to_date: toDate,
+      relevance: relFilter_,
+      field_filters: fieldFilters_,
+      sort_by: sortField_,
+      sort_dir: sortDir_,
+    });
+    showToast('💾', 'Saved', `Search "${name}" saved`, 100);
+    hideToast(2500);
+    await loadSavedSearches();
+    document.getElementById('save-search-name').value = '';
+  } catch(e) {
+    showToast('!', 'Save failed', String(e), 0);
+    hideToast(4000);
+  }
+}
+
+async function applySavedSearch(id) {
+  try {
+    const list = await api.get('/api/saved-searches');
+    const s = list.find(x => x.id === id);
+    if (!s) return;
+    document.getElementById('data-search').value = s.search || '';
+    document.getElementById('data-from').value   = s.from_date || '';
+    document.getElementById('data-to').value     = s.to_date || '';
+    fieldFilters_ = (typeof s.field_filters === 'string') ? JSON.parse(s.field_filters || '[]') : (s.field_filters || []);
+    if (s.sort_by) { sortField_ = s.sort_by; sortDir_ = s.sort_dir || 'desc'; }
+    setRelFilter(s.relevance || '');
+    renderExcludeChips();
+    dataPage_ = 1;
+    document.getElementById('saved-search-modal').classList.remove('open');
+    loadData(selJobId, 1);
+    showToast('📂', 'Search loaded', `Applied "${esc(s.name)}"`, 100);
+    hideToast(2500);
+  } catch(e) { /* ignore */ }
+}
+
+async function deleteSavedSearch(id) {
+  if (!confirm('Delete this saved search?')) return;
+  try {
+    await api.del(`/api/saved-searches/${id}`);
+    await loadSavedSearches();
+  } catch(e) { /* ignore */ }
+}
+
+// ── U5: Export ────────────────────────────────────────────────────────────────
+function exportData() {
+  if (!selJobId) return;
+  document.getElementById('export-modal').classList.add('open');
+}
+
+async function doExport() {
+  const fmt = document.getElementById('export-format').value;
+  const incAI  = document.getElementById('export-inc-ai').checked;
+  const incRaw = document.getElementById('export-inc-raw').checked;
+  const search   = document.getElementById('data-search')?.value.trim() || '';
+  const fromRaw  = document.getElementById('data-from')?.value || '';
+  const toRaw    = document.getElementById('data-to')?.value || '';
+
+  const params = new URLSearchParams({ format: fmt });
+  if (search)       params.set('search', search);
+  if (regexMode_)   params.set('regex', 'true');
+  if (fromRaw)      params.set('from_date', fromRaw.replace('T', ' '));
+  if (toRaw)        params.set('to_date', toRaw.replace('T', ' '));
+  if (relFilter_)   params.set('relevance', relFilter_);
+  if (!incAI)       params.set('no_ai', 'true');
+  if (incRaw)       params.set('raw_fields', 'true');
+  if (fieldFilters_.length) params.set('field_filters', JSON.stringify(fieldFilters_));
+
+  document.getElementById('export-modal').classList.remove('open');
+  showToast('⬇', 'Exporting…', 'Preparing download…', 30);
+
+  // Trigger file download via hidden link
+  const a = document.createElement('a');
+  a.href = `/api/jobs/${selJobId}/export?${params}`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  hideToast(2000);
+}
+
+// ── F1: Clusters ──────────────────────────────────────────────────────────────
+async function openClusters() {
+  if (!selJobId) return;
+  document.getElementById('clusters-modal').classList.add('open');
+  const el = document.getElementById('clusters-list');
+  el.innerHTML = '<div style="padding:20px;color:var(--tx2);font-size:12px;text-align:center;">Loading clusters…</div>';
+
+  const search  = document.getElementById('data-search')?.value.trim() || '';
+  const fromRaw = document.getElementById('data-from')?.value || '';
+  const toRaw   = document.getElementById('data-to')?.value || '';
+  const params  = new URLSearchParams({ limit: 500 });
+  if (search)       params.set('search', search);
+  if (fromRaw)      params.set('from_date', fromRaw.replace('T', ' '));
+  if (toRaw)        params.set('to_date', toRaw.replace('T', ' '));
+  if (relFilter_)   params.set('relevance', relFilter_);
+  if (fieldFilters_.length) params.set('field_filters', JSON.stringify(fieldFilters_));
+
+  try {
+    const data = await api.get(`/api/jobs/${selJobId}/clusters?${params}`);
+    if (!data.clusters || !data.clusters.length) {
+      el.innerHTML = '<div style="padding:20px;color:var(--tx2);font-size:12px;text-align:center;">No error clusters found in current view.<br>Try filtering by relevant logs or run AI analysis first.</div>';
+      return;
+    }
+    el.innerHTML = data.clusters.map((c, i) =>
+      `<div class="cluster-item" onclick="applyClusterFilter(${JSON.stringify(c.pattern).replace(/"/g,'&quot;')})">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="cluster-count">${c.count}</span>
+          <span style="font-size:12px;font-weight:500;color:var(--tx0);">
+            ${c.severity ? `<span class="sev sev-${c.severity}" style="margin-right:6px;">${c.severity.toUpperCase()}</span>` : ''}
+            ${esc((c.representative || '').slice(0, 80))}
+          </span>
+        </div>
+        <div class="cluster-pattern">${esc(c.pattern)}</div>
+      </div>`
+    ).join('');
+    // Total label
+    const totalUniq = data.clusters.length;
+    const totalLogs = data.clusters.reduce((s, c) => s + c.count, 0);
+    el.insertAdjacentHTML('afterbegin',
+      `<div style="padding:8px 12px;font-size:11px;color:var(--tx2);border-bottom:1px solid var(--border);margin-bottom:8px;">
+        ${totalUniq} unique patterns · ${totalLogs} total log entries
+        <span style="float:right;font-size:10px;color:var(--tx2);">Click a cluster to filter</span>
+      </div>`);
+  } catch(e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px;">Error loading clusters: ${esc(String(e))}</div>`;
+  }
+}
+
+function applyClusterFilter(pattern) {
+  document.getElementById('clusters-modal').classList.remove('open');
+  // Use the normalized pattern as a regex search
+  document.getElementById('data-search').value = pattern;
+  regexMode_ = true;
+  document.getElementById('regex-toggle').classList.add('active');
+  dataPage_ = 1;
+  loadData(selJobId, 1);
+}
+
+// ── U6: Keyboard shortcuts ────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  // Don't trigger shortcuts when typing in inputs
+  const tag = document.activeElement?.tagName?.toLowerCase();
+  const isInput = tag === 'input' || tag === 'textarea' || tag === 'select';
+  const anyModalOpen = [...document.querySelectorAll('.modal-overlay.open')].length > 0;
+
+  if (e.key === 'Escape') {
+    // Close any open modal
+    document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+    // Also blur search
+    document.activeElement?.blur();
+    return;
+  }
+  if (e.key === '?' && !isInput) {
+    document.getElementById('shortcuts-modal').classList.add('open');
+    return;
+  }
+  if (anyModalOpen || isInput) return;
+
+  switch (e.key) {
+    case '/':
+      e.preventDefault();
+      document.getElementById('data-search')?.focus();
+      // Make sure we're on the data tab
+      if (selJobId) switchTab('data');
+      break;
+    case 'r':
+      if (selJobId) {
+        const btn = document.getElementById('btn-run');
+        if (btn && !btn.disabled) btn.click();
+      }
+      break;
+    case 'a':
+      if (selJobId) {
+        const btn = document.getElementById('btn-analyze');
+        if (btn && !btn.disabled) btn.click();
+      }
+      break;
+    case 'n':
+      if (selJobId && document.getElementById('pane-data')?.classList.contains('active'))
+        dataPage(1);
+      break;
+    case 'p':
+      if (selJobId && document.getElementById('pane-data')?.classList.contains('active'))
+        dataPage(-1);
+      break;
+    case 'd':
+      if (selJobId) switchTab('data');
+      break;
+    case 'l':
+      if (selJobId) switchTab('live');
+      break;
+  }
+});
+
+// Dashboard is loaded on init and whenever welcome is shown
 </script>
 </body>
 </html>
