@@ -136,14 +136,34 @@ class HitCollector:
 
     def handle_route(self, route, request):
         """Route-based interception — captures bsearch response body reliably."""
-        response = route.fetch()
+        try:
+            response = route.fetch()
+        except Exception as e:
+            # Browser closed mid-request — silently abort, don't crash the handler
+            err = str(e)
+            if "disposed" in err or "destroyed" in err or "closed" in err:
+                try:
+                    route.abort()
+                except Exception:
+                    pass
+                return
+            print(f"    [bsearch] route fetch error: {e}")
+            try:
+                route.abort()
+            except Exception:
+                pass
+            return
+
         if "/internal/bsearch" in request.url:
             try:
                 text = response.text()
                 self._parse_bsearch(text, debug=True)
             except Exception as e:
-                print(f"    [bsearch] route error: {e}")
-        route.fulfill(response=response)
+                print(f"    [bsearch] parse error: {e}")
+        try:
+            route.fulfill(response=response)
+        except Exception:
+            pass  # page already closed — safe to ignore
 
     def _decode_line(self, line: str) -> dict | None:
         """Decode one bsearch line: base64+zlib → JSON."""
@@ -622,6 +642,12 @@ def cmd_scrape(args):
             saved = save_hits_to_db(conn, hits, run_id=args.run_id, job_id=args.job_id)
             total_saved += saved
             print(f"[✓] Final flush: +{saved} rows (total {total_saved:,})")
+
+        # Unregister route handler BEFORE closing to avoid "context disposed" race
+        try:
+            page.unroute("**/internal/bsearch**")
+        except Exception:
+            pass
 
         browser.close()
 
