@@ -413,34 +413,67 @@ def refresh_page(page):
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 def cmd_login(url: str):
+    import signal
+    TIMEOUT = 30  # seconds
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, slow_mo=50)
         ctx = browser.new_context()
         page = ctx.new_page()
         print(f"[→] Opening {url}")
-        print("[!] Please complete SSO login in the browser window.")
-        print("[!] Script will auto-save session once Kibana fully loads...")
+        print("[!] Complete SSO login in the browser window.")
+        print(f"[!] Session saves automatically after {TIMEOUT}s, or press ^C once to save now.\n")
 
         page.goto(url, wait_until="domcontentloaded", timeout=90_000)
 
-        deadline = time.time() + 300
-        while time.time() < deadline:
-            current = page.url
-            print(f"    current url: {current}")
-            if "kibana.bigcommerce.net/app/" in current:
-                print("[✓] Detected Kibana /app/ — waiting for page to settle...")
-                try:
-                    page.wait_for_load_state("networkidle", timeout=20_000)
-                except PlaywrightTimeout:
-                    pass
-                print(f"[✓] Logged in!")
-                break
-            time.sleep(3)
-        else:
-            print("[!] Timed out — saving session anyway")
+        deadline = time.time() + TIMEOUT
+        try:
+            while True:
+                remaining = int(deadline - time.time())
+                if remaining <= 0:
+                    print(f"\n[!] {TIMEOUT}s elapsed — saving session now...")
+                    break
 
-        save_session(ctx)
-        time.sleep(2)
+                # Check all open pages for a successful Kibana /app/ URL
+                for pg in ctx.pages:
+                    try:
+                        current = pg.url
+                    except Exception:
+                        continue
+                    if "kibana" in current and "/app/" in current:
+                        print(f"\n[✓] Detected Kibana: {current[:80]}")
+                        try:
+                            pg.wait_for_load_state("networkidle", timeout=10_000)
+                        except PlaywrightTimeout:
+                            pass
+                        print("[✓] Logged in — saving session...")
+                        deadline = 0  # break outer loop
+                        break
+
+                if deadline == 0:
+                    break
+
+                # Countdown line (overwrites itself)
+                urls = []
+                for pg in ctx.pages:
+                    try: urls.append(pg.url[:70])
+                    except: pass
+                url_str = " | ".join(urls) if urls else "(loading...)"
+                print(f"  [{remaining:>2}s remaining]  {url_str}     ", end="\r", flush=True)
+                time.sleep(1)
+
+        except KeyboardInterrupt:
+            print("\n[!] ^C received — saving session now...")
+
+        # Ignore further ^C during the save so it can't be interrupted
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            save_session(ctx)
+        except Exception as e:
+            print(f"[!] Save error: {e}")
+        finally:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+
         browser.close()
 
 
