@@ -1474,11 +1474,14 @@ function updateDetailHeaderForCollection(coll) {
 
 async function runCollection(cid) {
   const coll = collections_.find(c=>c.id===cid);
-  const name = coll?.name || `Collection ${cid}`;
   const btn = document.getElementById('btn-run');
   btn.disabled = true; btn.textContent = '⟳ Running…';
   const r = await api.post(`/api/collections/${cid}/run`, {});
   if (r.run_id) {
+    // Register the run_id under ALL source job IDs so cancel works from any source view
+    for (const src of (coll?.sources || [])) {
+      if (src.job_id) activeRunIds_[src.job_id] = r.run_id;
+    }
     const firstJobId = coll?.sources?.[0]?.job_id;
     switchTab('live');
     streamRun(r.run_id, firstJobId || selJobId);
@@ -1618,10 +1621,17 @@ function streamRun(runId, jobId) {
   };
 }
 
-// F7: Cancel the active run for selJobId
+// F7: Cancel the active run for selJobId (or any collection source sharing the same run)
 async function cancelRun() {
-  const runId = activeRunIds_[selJobId];
-  if (!runId) return;
+  // Try current job first, then fall back to any run in the current collection
+  let runId = activeRunIds_[selJobId];
+  if (!runId && selCollId) {
+    const coll = collections_.find(c => c.id === selCollId);
+    for (const src of (coll?.sources || [])) {
+      if (activeRunIds_[src.job_id]) { runId = activeRunIds_[src.job_id]; break; }
+    }
+  }
+  if (!runId) { showToast('!', 'Nothing to cancel', 'No active run found', 0); hideToast(3000); return; }
   if (!confirm(`Cancel run #${runId}?`)) return;
   try {
     await api.post(`/api/runs/${runId}/cancel`, {});
