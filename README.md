@@ -1,6 +1,6 @@
 # Kibana Log Scraper
 
-A tool that scrapes logs from Kibana Discover into a local SQLite database, then lets you browse, filter, AI-classify, and correlate them through a web UI or Claude Desktop (via MCP).
+A tool that scrapes logs from Kibana Discover into a local SQLite database, then lets you browse, filter, AI-classify, correlate, and run custom local-LLM classifiers through a web UI or Claude Desktop (via MCP).
 
 ## Features
 
@@ -8,6 +8,7 @@ A tool that scrapes logs from Kibana Discover into a local SQLite database, then
 - **Web UI** — browse logs with full-text search, field-specific filters, date range, pagination, and sorting
 - **AI classification** — uses Claude Haiku to mark each log as checkout-relevant/irrelevant, assign severity, and write a one-sentence summary
 - **Auto-classify** — propagate classifications from already-analyzed logs to new unanalyzed ones via pattern matching (no API calls needed)
+- **Custom classifiers** — define your own named classifiers (with description, keywords, examples); embeddings are computed locally via `nomic-embed-text` and similarity is scored with `llama3.1:8b` — no cloud required
 - **Collections** — group multiple Kibana URLs (e.g. Nginx + Syslog) into one logical source and run them together
 - **Correlation** — link log records across collections by shared field values (request ID, IP, etc.)
 - **Chunked scraping** — split long time ranges into smaller windows to avoid hitting Kibana result limits
@@ -18,14 +19,50 @@ A tool that scrapes logs from Kibana Discover into a local SQLite database, then
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Log in to Kibana
+### 2. Install Ollama (for local LLM classifiers)
+
+Ollama is the local model runtime. Install the **application** first (the `ollama` Python package installed by `pip` is only the client library — it does not include the server).
+
+**macOS — Homebrew:**
+```bash
+brew install ollama
+```
+
+**macOS — Direct download:**  
+Download the `.dmg` from **https://ollama.com/download**, open it, and drag Ollama to Applications.
+
+**Linux:**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+After installing, start the server and pull the two required models:
+
+```bash
+ollama serve &   # start in background (macOS app users: just open Ollama from Applications)
+
+# Embedding model — computes classifier and log embeddings
+ollama pull nomic-embed-text
+
+# LLM — generates match reasons (only needed when "Generate reasons" is enabled)
+ollama pull llama3.1:8b
+```
+
+Verify everything is working:
+```bash
+ollama list      # should show both models
+```
+
+Ollama must be running whenever you create classifiers or run a classification job. The rest of the web app works fine without it.
+
+### 3. Log in to Kibana
 
 Kibana uses SSO, so you need to save a browser session first. This opens a real Chrome window — complete the SSO login manually:
 
@@ -35,7 +72,7 @@ python kibana_scraper.py login https://your-kibana-host
 
 Your session is saved to `session.json`. Repeat this step whenever the session expires.
 
-### 3. Run the web app
+### 4. Run the web app
 
 ```bash
 python app.py
@@ -75,6 +112,30 @@ A *Collection* groups multiple Kibana URLs that represent the same logical syste
 2. Optionally add *Correlation Keys* — field names (like `request_id`) that appear in both log types so matching records can be linked.
 3. Click ▶ to run all sources sequentially.
 
+### Custom Classifiers (Local LLM)
+
+Classifiers let you define named categories and score every log against them using local embedding similarity — no Anthropic key required.
+
+**Requires Ollama** with `nomic-embed-text` and (for reasons) `llama3.1:8b` pulled and running.
+
+1. Click **🏷 Classifiers** in the Data toolbar to open the Classifier panel.
+2. Click **+ New Classifier** and fill in:
+   - **Name** — a short label (e.g. *Payment Errors*)
+   - **Description** — what logs should match; be specific
+   - **Keywords** — comma-separated terms to reinforce the embedding
+   - **Positive / Negative examples** — sample log lines that should or should not match
+3. Click **Save & Embed** — the embedding is computed immediately via `nomic-embed-text` and stored.
+4. Click **▶ Run Classification** and choose a mode:
+   | Mode | Behaviour |
+   |------|-----------|
+   | **Missing only** | Processes logs that don't yet have results for all active classifiers |
+   | **All logs** | Re-scores every log, overwriting existing results |
+   | **Time range** | Scores logs within a specific date window |
+5. Set a **match threshold** (default `0.5`) — logs with cosine similarity above this are marked as matched.
+6. Optionally enable **Generate reasons** to have `llama3.1:8b` write a one-sentence explanation for each matched log (slower).
+
+Once results are computed, a **filter pill row** appears above the log table. Click any classifier name to show only matched logs. Expand any log row to see all classifier scores.
+
 ### Field Filters
 
 Click **+** next to any cell value to add an **include** filter for that exact field/value.  
@@ -95,6 +156,8 @@ Keys are stored in `keys.json` (excluded from git) and can be set via the **Sett
 |-----|---------|
 | `ANTHROPIC_API_KEY` | AI classification via Claude Haiku |
 | `GITHUB_TOKEN` | Code search — links log errors to source files in the BigCommerce org |
+
+> **Note:** The custom classifier feature uses **Ollama** (local) and does not require any API key. Only `ANTHROPIC_API_KEY` is needed for the separate *Analyze* / *Summarize* features.
 
 ---
 
@@ -142,6 +205,7 @@ kibana-scraper/
 ├── mcp_server.py           # MCP server for Claude Desktop
 ├── schema.sql              # SQLite schema (applied on first run)
 ├── routers/
+│   ├── classifiers.py          # Classifier CRUD + local-LLM classification job
 │   ├── jobs.py             # /api/jobs/* — CRUD, data, histogram, export
 │   ├── collections.py      # /api/collections/* — grouped multi-source jobs
 │   ├── groups.py           # /api/groups/* — correlation groups + keys
@@ -151,6 +215,10 @@ kibana-scraper/
 │   ├── _run_engine.py      # Scrape runner, SSE live log, scheduler
 │   └── _filters.py         # Shared SQL WHERE-clause builder (search, field filters, cross-source)
 ├── static/
+│   ├── index.html              # Single-page web UI
+│   ├── classifiers.js          # Classifier UI (panel, modals, filter pills)
+│   └── ...                     # Other UI modules
+├── schema.sql                  # DB schema reference
 │   ├── index.html          # Single-page app shell
 │   ├── base.css            # Variables, reset, buttons, sidebar, modals, forms
 │   ├── data-view.css       # Toolbar, table, histogram, field panel, chips
@@ -187,5 +255,6 @@ The SQLite database (`kibana_data.db`) is created automatically on first run.
 - Python 3.11+
 - Chromium (installed by `playwright install chromium`)
 - Access to a Kibana instance (SSO login required once)
-- Optional: Anthropic API key for AI classification
+- **[Ollama](https://ollama.com)** with `nomic-embed-text` and `llama3.1:8b` — for custom classifiers
+- Optional: Anthropic API key for AI classification (Claude Haiku)
 - Optional: GitHub personal access token for code search

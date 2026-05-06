@@ -629,3 +629,53 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 }
 .histogram-meta span { white-space: nowrap; }
 #histogram-canvas { height: 90px !important; cursor: crosshair; }
+
+/* ── Classifiers ── */
+.clf-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 5px;
+  background: var(--bg1); transition: border-color .15s;
+}
+.clf-item:hover { border-color: var(--blue); }
+.clf-disabled { opacity: .5; }
+.clf-item-info { flex: 1; min-width: 0; }
+.clf-item-name { font-weight: 600; font-size: 13px; color: var(--tx0); }
+.clf-item-desc { font-size: 11px; color: var(--tx2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clf-item-meta { font-size: 10px; color: var(--tx2); margin-top: 2px; }
+.clf-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.clf-del-btn:hover { color: var(--red) !important; }
+.clf-empty { padding: 16px; color: var(--tx2); font-size: 12px; text-align: center; }
+
+/* Classifier filter pills */
+.clf-pill {
+  padding: 2px 10px; font-size: 11px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--bg2);
+  color: var(--tx1); cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.clf-pill:hover { border-color: var(--blue); color: var(--blue); }
+.clf-pill-active { border-color: var(--blue); background: rgba(88,166,255,.15); color: var(--blue); font-weight: 600; }
+
+/* Per-log classifier results */
+.clf-results-section {
+  border-top: 1px solid rgba(188,140,255,.2);
+  background: rgba(188,140,255,.04);
+  padding: 8px 14px 10px;
+}
+.clf-results-hdr {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--purple); margin-bottom: 6px;
+}
+.clf-results-body { display: flex; flex-direction: column; gap: 4px; }
+.clf-result-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; flex-wrap: wrap;
+}
+.clf-result-name {
+  font-weight: 600; color: var(--tx0); max-width: 160px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Run classification progress bar */
+#clf-run-pbar { height: 4px; background: var(--bg2); border-radius: 2px; overflow: hidden; }
+#clf-run-bar-fill { height: 100%; transition: width .3s; }

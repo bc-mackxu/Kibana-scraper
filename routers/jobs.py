@@ -287,6 +287,8 @@ def job_data(
     sort_dir: str = "desc",
     field_filters: str = "",
     cross_source: bool = False,
+    classifier_id: int = None,
+    classifier_min_confidence: float = None,
     job_ids: str = "",   # comma-separated job IDs for multi-source (All Sources) mode
 ):
     offset = (page - 1) * per_page
@@ -296,6 +298,7 @@ def job_data(
         jid, search=search, from_date=from_date, to_date=to_date,
         relevance=relevance, field_filters=field_filters,
         regex=regex, cross_source=cross_source,
+        classifier_id=classifier_id, classifier_min_confidence=classifier_min_confidence,
         job_ids=parsed_ids if multi else None,
     )
     # Use table alias "le" when cross_source may have injected "le.id" references;

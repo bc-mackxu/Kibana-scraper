@@ -214,8 +214,15 @@
             <button class="btn btn-ghost btn-sm" onclick="refreshData()" title="Refresh (r)">↻</button>
             <button class="btn btn-ghost btn-sm" id="btn-summary" onclick="showSummary()" title="AI Summary">📋</button>
             <button class="btn btn-ghost btn-sm" onclick="openClusters()" title="Error Clusters">🔷 Clusters</button>
+            <button class="btn btn-ghost btn-sm" onclick="openClassifierPanel()" title="Manage Classifiers">🏷 Classifiers</button>
             <button class="btn btn-ghost btn-sm" onclick="exportData()" title="Export CSV/JSON">⬇ Export</button>
           </div>
+        </div>
+
+        <!-- Classifier filter pills -->
+        <div id="classifier-filter-row" style="display:none;align-items:center;gap:6px;padding:4px 0;flex-wrap:wrap;">
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);">🏷 Filter by:</span>
+          <div id="classifier-filter-pills" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
         </div>
 
         <!-- Exclude filter chips -->
@@ -574,6 +581,110 @@
   </div>
 </div>
 
+<!-- ── Classifier Management Panel Modal ── -->
+<div class="modal-overlay" id="clf-panel-modal" onclick="if(event.target===this)closeClassifierPanel()">
+  <div class="modal-box" style="width:640px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="modal-title" style="margin:0;">🏷 Classifiers</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="openRunClassify()">▶ Run Classification</button>
+        <button class="btn btn-green btn-sm" onclick="openAddClassifier()">+ New Classifier</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeClassifierPanel()">✕</button>
+      </div>
+    </div>
+    <div id="classifier-list" style="flex:1;overflow-y:auto;min-height:80px;border:1px solid var(--border);border-radius:var(--radius);padding:6px;"></div>
+    <div class="form-actions" style="padding-top:10px;margin-top:0;">
+      <button class="btn btn-ghost" onclick="closeClassifierPanel()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Add / Edit Classifier Modal ── -->
+<div class="modal-overlay" id="clf-modal" onclick="if(event.target===this)closeClassifierModal()">
+  <div class="modal-box" style="width:560px;">
+    <div class="modal-title" id="clf-modal-title">Add Classifier</div>
+    <p style="font-size:12px;color:var(--tx2);margin-top:-10px;">Embedding is computed immediately via <code style="background:var(--bg2);padding:1px 4px;border-radius:3px;">nomic-embed-text</code></p>
+    <div class="form-field">
+      <label class="form-label">Name <span style="color:var(--red);">*</span></label>
+      <input class="form-input" id="clf-f-name" placeholder="e.g. Payment Errors" onkeydown="if(event.key==='Enter')document.getElementById('clf-f-desc').focus()" />
+    </div>
+    <div class="form-field">
+      <label class="form-label">Description <span style="color:var(--red);">*</span></label>
+      <textarea class="form-input" id="clf-f-desc" rows="3" placeholder="Describe what logs this classifier should match. Be specific." style="resize:vertical;font-size:12px;line-height:1.5;"></textarea>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Keywords <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(comma-separated)</span></label>
+      <input class="form-input" id="clf-f-kw" placeholder="e.g. payment, checkout, stripe, error" />
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label">Positive Examples <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(should match)</span></label>
+        <textarea class="form-input" id="clf-f-pos" rows="2" placeholder="Example log messages that match…" style="resize:vertical;font-size:12px;line-height:1.5;"></textarea>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Negative Examples <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(should NOT match)</span></label>
+        <textarea class="form-input" id="clf-f-neg" rows="2" placeholder="Example log messages that should not match…" style="resize:vertical;font-size:12px;line-height:1.5;"></textarea>
+      </div>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Enabled</label>
+      <select class="form-input" id="clf-f-enabled" style="width:160px;">
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <div style="font-size:11px;color:var(--orange);min-height:18px;margin-bottom:4px;" id="clf-modal-status"></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeClassifierModal()">Cancel</button>
+      <button class="btn btn-green" id="clf-modal-save" onclick="saveClassifier()">Save &amp; Embed</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Run Classification Job Modal ── -->
+<div class="modal-overlay" id="clf-run-modal" onclick="if(event.target===this)closeRunClassify()">
+  <div class="modal-box" style="width:480px;">
+    <div class="modal-title">▶ Run Classification</div>
+    <p style="font-size:12px;color:var(--tx2);margin-top:-10px;">Computes embedding similarity between each log and all enabled classifiers.</p>
+    <div class="form-field">
+      <label class="form-label">Mode</label>
+      <select class="form-input" id="clf-run-mode" onchange="onClfRunModeChange(this.value)">
+        <option value="missing">Missing only — logs with incomplete classifier results</option>
+        <option value="all">All logs — override existing results</option>
+        <option value="range">Time range — process logs in date range</option>
+      </select>
+    </div>
+    <div id="clf-run-range" style="display:none;gap:12px;">
+      <div class="form-field" style="flex:1;">
+        <label class="form-label">From</label>
+        <input class="form-input" id="clf-run-from" type="datetime-local" />
+      </div>
+      <div class="form-field" style="flex:1;">
+        <label class="form-label">To</label>
+        <input class="form-input" id="clf-run-to" type="datetime-local" />
+      </div>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Match threshold <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx2);">(0.0–1.0, higher = stricter)</span></label>
+      <input class="form-input" id="clf-run-threshold" type="number" min="0" max="1" step="0.05" value="0.5" style="width:100px;" />
+    </div>
+    <div class="form-field">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="clf-run-reasons" style="accent-color:var(--blue);">
+        Generate reasons with llama3.1 <span style="color:var(--tx2);">(slower, matched logs only)</span>
+      </label>
+    </div>
+    <div class="analyze-progress-bar" id="clf-run-pbar" style="margin:8px 0;">
+      <div class="analyze-bar-fill" id="clf-run-bar-fill" style="width:0%;background:var(--blue);"></div>
+    </div>
+    <div style="font-size:12px;min-height:20px;color:var(--tx1);" id="clf-run-status"></div>
+    <div class="form-actions" style="margin-top:12px;">
+      <button class="btn btn-ghost" onclick="closeRunClassify()">Close</button>
+      <button class="btn btn-blue" id="clf-run-btn" onclick="startClassifyRun()">▶ Run</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/core.js"></script>
 <script src="/static/data-table.js"></script>
 <script src="/static/sidebar.js"></script>
@@ -582,5 +693,6 @@
 <script src="/static/modals.js"></script>
 <script src="/static/dashboard.js"></script>
 <script src="/static/keyboard.js"></script>
+<script src="/static/classifiers.js"></script>
 </body>
 </html>

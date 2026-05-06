@@ -1,6 +1,7 @@
 # Sensitive / personal files
 session.json
 keys.json
+.idea/
 
 # Database (contains scraped log data)
 kibana_data.db
