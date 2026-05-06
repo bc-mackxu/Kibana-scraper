@@ -5,6 +5,7 @@ function switchTab(name) {
     document.getElementById('pane-'+t).classList.toggle('active', t===name);
   });
   if (name==='data' && selJobId) {
+    if (typeof loadClassifiers === 'function') loadClassifiers();
     if (!dataFields_.length) loadFields(selJobId).then(() => loadData(selJobId, dataPage_));
     else loadData(selJobId, dataPage_);
   }
