@@ -650,11 +650,11 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 /* Classifier filter pills */
 .clf-pill {
   padding: 2px 10px; font-size: 11px; border-radius: 12px;
-  border: 1px solid var(--border); background: var(--bg2);
+  border: 1.5px solid var(--border); background: var(--bg2);
   color: var(--tx1); cursor: pointer; transition: all .15s; white-space: nowrap;
 }
-.clf-pill:hover { border-color: var(--blue); color: var(--blue); }
-.clf-pill-active { border-color: var(--blue); background: rgba(88,166,255,.15); color: var(--blue); font-weight: 600; }
+.clf-pill:hover:not(.clf-pill-active) { border-color: var(--blue); color: var(--blue); }
+.clf-pill-active { border-color: var(--blue); background: var(--blue); color: #fff; font-weight: 600; }
 
 /* Per-log classifier results */
 .clf-results-section {
@@ -679,3 +679,14 @@ input.row-checkbox { cursor: pointer; accent-color: var(--blue); width: 13px; he
 /* Run classification progress bar */
 #clf-run-pbar { height: 4px; background: var(--bg2); border-radius: 2px; overflow: hidden; }
 #clf-run-bar-fill { height: 100%; transition: width .3s; }
+
+/* Scores toggle button */
+.clf-score-btn-active { background: rgba(88,166,255,.15) !important; color: var(--blue) !important; border-color: var(--blue) !important; }
+
+/* Inline classifier score column */
+.clf-score-cell { min-width: 160px; max-width: 220px; padding: 4px 8px !important; vertical-align: middle; }
+.clf-score-mini { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+.clf-score-mini:last-child { margin-bottom: 0; }
+.clf-score-mini-name { font-size: 10px; color: var(--tx1); min-width: 72px; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clf-score-mini-bar { flex: 1; height: 5px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.clf-score-mini-pct { font-size: 10px; min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; }

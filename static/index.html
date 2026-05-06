@@ -223,6 +223,8 @@
         <div id="classifier-filter-row" style="display:none;align-items:center;gap:6px;padding:4px 0;flex-wrap:wrap;">
           <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);">🏷 Filter by:</span>
           <div id="classifier-filter-pills" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+          <div style="width:1px;height:14px;background:var(--border);margin:0 2px;flex-shrink:0;"></div>
+          <button class="btn btn-ghost btn-sm" id="btn-clf-scores" onclick="toggleClfScores()" title="Show classifier confidence scores per row" style="font-size:11px;padding:2px 8px;">📊 Scores</button>
         </div>
 
         <!-- Exclude filter chips -->
