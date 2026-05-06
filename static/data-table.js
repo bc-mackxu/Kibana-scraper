@@ -331,12 +331,16 @@ async function loadCorrInline(rowId, el) {
 // ── Data loading ──────────────────────────────────────────────────────────────
 
 /**
- * When "All Sources" is active and the current view is a collection source,
- * returns a comma-separated string of all job IDs in that collection.
- * This enables true multi-source search (vs. correlation-based cross-source).
+ * Returns a comma-separated string of all job IDs in the current collection
+ * ONLY when the user is viewing the collection as a whole (clicked the collection
+ * name in the sidebar, not a specific source within it).
+ *
+ * Collection-level view → multi-source timeline (all sources merged, sorted by time).
+ * Specific-source view  → cross-source correlation (primary source rows + correlated
+ *                         partner rows, keeping the selected source as the anchor).
  */
 function _collectionJobIds() {
-  if (!crossSourceMode_ || !selCollId) return null;
+  if (!crossSourceMode_ || !selCollId || !isCollectionView_) return null;
   const coll = (collections_ || []).find(c => c.id === selCollId);
   if (!coll?.sources?.length) return null;
   const ids = coll.sources.map(s => s.job_id).filter(Boolean);
@@ -368,9 +372,10 @@ async function loadData(jobId, page) {
   const d = await api.get(`/api/jobs/${jobId}/data?${params}`);
   const total = d.total || 0;
   const pages = Math.ceil(total / d.per_page) || 1;
-  const _csLabel = crossSourceMode_ && (search || fieldFilters_.length)
-    ? (collIds ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">⊕ all sources</span>'
-               : ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>')
+  const _csLabel = crossSourceMode_
+    ? (collIds
+        ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">⊕ all sources</span>'
+        : ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>')
     : '';
   document.getElementById('data-total').innerHTML = `<b>${total.toLocaleString()}</b> records${_csLabel}`;
   document.getElementById('data-page-info').innerHTML = `Page <b>${d.page}</b> / <b>${pages}</b>`;
@@ -490,8 +495,14 @@ function toggleCrossSource() {
   crossSourceMode_ = !crossSourceMode_;
   const btn = document.getElementById('cross-source-toggle');
   if (btn) btn.classList.toggle('active', crossSourceMode_);
-  if (crossSourceMode_) showToast('🔗','Cross-source ON','Search matches correlated records from all sources',1);
-  else                  showToast('🔍','Single-source mode','Search restricted to this source only',1);
+  if (crossSourceMode_) {
+    const msg = isCollectionView_
+      ? 'Combined timeline from all collection sources'
+      : 'Showing this source + correlated rows from other sources';
+    showToast('🔗','All Sources ON', msg, 1);
+  } else {
+    showToast('🔍','Single-source mode','Search restricted to this source only',1);
+  }
   dataPage_=1; loadData(selJobId, 1);
 }
 

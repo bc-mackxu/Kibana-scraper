@@ -13,6 +13,7 @@ let perPage_ = 50;
 let selectedRows_ = new Set();
 let regexMode_ = false;
 let crossSourceMode_ = false;
+let isCollectionView_ = false;   // true = clicked collection name (multi-source timeline), false = specific source selected
 let fieldSearch_ = '';
 const LINKED_SEP = '\x1E';   // separates "SourceLabel\x1Efield_name" for linked fields
 let linkedJobFields_ = [];

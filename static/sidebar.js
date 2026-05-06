@@ -129,6 +129,7 @@ async function selectJob(id) {
   if (selJobId !== id) _resetJobView();
   selJobId = id;
   selCollId = null;
+  isCollectionView_ = false;
   const collJobIds = new Set(collections_.flatMap(c=>(c.sources||[]).map(s=>s.job_id).filter(Boolean)));
   renderSidebar(collJobIds);
   document.getElementById('welcome').style.display='none';
@@ -153,6 +154,7 @@ function _syncClassifierFilterRow() {
 }
 
 async function selectCollection(cid) {
+  isCollectionView_ = true;
   selCollId = cid;
   const coll = collections_.find(c=>c.id===cid);
   const firstJobId = coll?.sources?.[0]?.job_id;
@@ -170,6 +172,7 @@ async function selectCollection(cid) {
 }
 
 async function selectCollectionSource(collId, jobId) {
+  isCollectionView_ = false;
   selCollId = collId;
   if (selJobId !== jobId) { _resetJobView(); selJobId = jobId; }
   const coll = collections_.find(c=>c.id===collId);

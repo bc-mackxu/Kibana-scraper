@@ -30,8 +30,8 @@ class CollectionIn(BaseModel):
     chunk_hours:  int  = 0
     schedule_hour:int  = 2
     enabled:      bool = True
-    sources:      list = []
-    corr_keys:    list = []
+    sources:      list[CollectionSourceIn] = []
+    corr_keys:    list[str] = []
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
