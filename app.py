@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from db import init_db
 from routers._run_engine import scheduler, _refresh_scheduler, SCRAPER_DIR
 from routers._filters import _build_log_filter  # noqa: F401 — re-exported for compatibility
-from routers import jobs, collections, groups, logs, analysis
+from routers import jobs, collections, groups, logs, analysis, classifiers as classifiers_router
 from routers import settings as settings_router
 from routers.settings import _load_keys
 
@@ -64,6 +64,7 @@ app.include_router(groups.router)
 app.include_router(logs.router)
 app.include_router(analysis.router)
 app.include_router(settings_router.router)
+app.include_router(classifiers_router.router)
 
 
 if __name__ == "__main__":

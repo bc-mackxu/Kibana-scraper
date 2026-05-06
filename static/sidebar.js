@@ -136,12 +136,20 @@ async function selectJob(id) {
   const job = jobs.find(j=>j.id===id);
   updateDetailHeader(job);
   _updateCrossSourceBtn();
+  if (typeof loadClassifiers === 'function') loadClassifiers().then(_syncClassifierFilterRow);
   if (activeESes_[id] || (job && job.is_running && activeRunIds_[id])) {
     switchTab('live'); reconnectLiveLog(id);
   } else {
     switchTab('data');
   }
   await loadRuns(id);
+}
+
+function _syncClassifierFilterRow() {
+  const row = document.getElementById('classifier-filter-row');
+  if (!row) return;
+  const hasClassifiers = typeof classifiers_ !== 'undefined' && classifiers_.length > 0;
+  row.style.display = hasClassifiers ? 'flex' : 'none';
 }
 
 async function selectCollection(cid) {

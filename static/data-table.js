@@ -242,6 +242,15 @@ function expandRow(tr, rowId) {
       inlineEl.dataset.loaded = '1';
       loadCorrInline(rowId, inlineEl);
     }
+    if (typeof classifiers_ !== 'undefined' && classifiers_.length) {
+      const clfSection = document.getElementById(`clf-results-${rowId}`);
+      const clfBody    = document.getElementById(`clf-results-body-${rowId}`);
+      if (clfSection && clfBody && clfSection.dataset.loaded !== '1') {
+        clfSection.dataset.loaded = '1';
+        clfSection.style.display = 'block';
+        loadLogClassifications(rowId, clfBody);
+      }
+    }
   }
 }
 
@@ -353,6 +362,8 @@ async function loadData(jobId, page) {
   params.set('sort_by',  sortField_);
   params.set('sort_dir', sortDir_);
   if (fieldFilters_.length) params.set('field_filters', JSON.stringify(fieldFilters_));
+  if (typeof classifierFilter_ !== 'undefined' && classifierFilter_ !== null)
+    params.set('classifier_id', classifierFilter_);
   if (page === 1) loadHistogram(jobId);
   const d = await api.get(`/api/jobs/${jobId}/data?${params}`);
   const total = d.total || 0;
@@ -644,6 +655,10 @@ function buildKibanaDocView(row, rj) {
       <tbody>${rows}</tbody>
     </table>
     <div id="corr-inline-${row.id}"></div>
+    <div id="clf-results-${row.id}" class="clf-results-section" style="display:none;">
+      <div class="clf-results-hdr">🏷 Classifier Scores</div>
+      <div class="clf-results-body" id="clf-results-body-${row.id}">Loading…</div>
+    </div>
   </div>`;
 }
 

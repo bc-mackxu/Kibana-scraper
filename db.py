@@ -221,6 +221,32 @@ CREATE TABLE IF NOT EXISTS schema_version (
 # Incremental migrations applied on top of the base schema
 _MIGRATIONS: list[tuple[int, str]] = [
     # (version, sql)  — add new ones at the end; never edit existing ones
+    (1, """
+CREATE TABLE IF NOT EXISTS classifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    positive_examples TEXT DEFAULT '',
+    negative_examples TEXT DEFAULT '',
+    keywords TEXT DEFAULT '',
+    enabled BOOLEAN DEFAULT 1,
+    embedding BLOB
+);
+
+CREATE TABLE IF NOT EXISTS log_classification_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    log_id INTEGER NOT NULL,
+    classifier_id INTEGER NOT NULL,
+    matched BOOLEAN DEFAULT 0,
+    confidence REAL DEFAULT 0.0,
+    reason TEXT DEFAULT '',
+    UNIQUE (log_id, classifier_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lcr_log_id ON log_classification_results (log_id);
+CREATE INDEX IF NOT EXISTS idx_lcr_classifier_id ON log_classification_results (classifier_id);
+CREATE INDEX IF NOT EXISTS idx_lcr_matched ON log_classification_results (classifier_id, matched);
+"""),
 ]
 
 

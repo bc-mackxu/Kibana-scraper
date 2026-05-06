@@ -14,6 +14,8 @@ def _build_log_filter(
     regex: bool = False,
     cross_source: bool = False,
     extra_conditions: list = None,   # e.g. ["timestamp IS NOT NULL"]
+    classifier_id: int = None,       # filter to logs matched by this classifier
+    classifier_min_confidence: float = None,
     job_ids: list = None,            # multi-source: search across all listed job IDs
 ) -> tuple:
     """
@@ -123,6 +125,14 @@ def _build_log_filter(
                     args += direct_args
         except Exception:
             pass
+
+    if classifier_id is not None:
+        min_conf = classifier_min_confidence if classifier_min_confidence is not None else 0.0
+        conditions.append(
+            "id IN (SELECT log_id FROM log_classification_results "
+            "WHERE classifier_id=? AND matched=1 AND confidence>=?)"
+        )
+        args += (classifier_id, min_conf)
 
     # Build final WHERE: if cross_source active, merge search + cross subquery
     if cross_ids_clause and cross_args:
