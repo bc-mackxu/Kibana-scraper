@@ -287,16 +287,22 @@ def job_data(
     sort_dir: str = "desc",
     field_filters: str = "",
     cross_source: bool = False,
+    job_ids: str = "",   # comma-separated job IDs for multi-source (All Sources) mode
 ):
     offset = (page - 1) * per_page
+    parsed_ids = [int(x) for x in job_ids.split(',') if x.strip().isdigit()] if job_ids else []
+    multi = len(parsed_ids) > 1
     where, args = _build_log_filter(
         jid, search=search, from_date=from_date, to_date=to_date,
         relevance=relevance, field_filters=field_filters,
         regex=regex, cross_source=cross_source,
+        job_ids=parsed_ids if multi else None,
     )
-    # Use table alias "le" when cross_source may have injected "le.id" references
-    tbl = "log_events le" if cross_source else "log_events"
-    col = "le." if cross_source else ""
+    # Use table alias "le" when cross_source may have injected "le.id" references;
+    # multi-source mode uses a plain table reference (no alias needed)
+    use_alias = cross_source and not multi
+    tbl = "log_events le" if use_alias else "log_events"
+    col = "le." if use_alias else ""
 
     _REAL_COLS = {"timestamp", "severity", "relevance", "id", "scraped_at"}
     dir_sql = "ASC" if sort_dir.lower() == "asc" else "DESC"
@@ -310,10 +316,15 @@ def job_data(
     total = (qone(f"SELECT COUNT(*) c FROM {tbl} WHERE {where}", args) or {}).get("c", 0)
     rows  = qall(
         f"SELECT {col}id, {col}timestamp, {col}run_id, {col}raw_json, {col}scraped_at, "
-        f"{col}relevance, {col}severity, {col}ai_summary, {col}code_refs "
+        f"{col}relevance, {col}severity, {col}ai_summary, {col}code_refs, {col}job_id "
         f"FROM {tbl} WHERE {where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
         args + (per_page, offset),
     )
+    # Attach source label when in multi-source mode so the UI can badge each row
+    if multi:
+        job_name_map = {r["id"]: r["name"] for r in (qall("SELECT id, name FROM scrape_jobs") or [])}
+        for row in (rows or []):
+            row["_source"] = job_name_map.get(row.get("job_id"), "")
     return {"rows": rows, "total": total, "page": page, "per_page": per_page}
 
 
@@ -327,16 +338,20 @@ def job_histogram(
     regex: bool = False,
     field_filters: str = "",
     cross_source: bool = False,
+    job_ids: str = "",   # comma-separated job IDs for multi-source (All Sources) mode
 ):
     """Return time-bucketed row counts for a bar chart."""
     from datetime import datetime as _dt
+    parsed_ids = [int(x) for x in job_ids.split(',') if x.strip().isdigit()] if job_ids else []
+    multi = len(parsed_ids) > 1
     where, full_args = _build_log_filter(
         jid, search=search, from_date=from_date, to_date=to_date,
         relevance=relevance, field_filters=field_filters,
         regex=regex, cross_source=cross_source,
         extra_conditions=["timestamp IS NOT NULL"],
+        job_ids=parsed_ids if multi else None,
     )
-    tbl = "log_events le"   # always use alias — cross_source subquery references le.id
+    tbl = "log_events le" if (cross_source and not multi) else "log_events"
 
     # Get time range to pick bucket size
     bounds = qone(

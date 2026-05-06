@@ -115,6 +115,13 @@ function getFieldValue(row, field, rj) {
     const sepIdx   = field.indexOf(LINKED_SEP);
     const srcLabel = field.slice(0, sepIdx);
     const srcField = field.slice(sepIdx + 1);
+    // In multi-source mode this row IS from that source — read directly from its own JSON
+    if (row._source && row._source === srcLabel) {
+      const val = rj[srcField];
+      let v = Array.isArray(val) ? (val[0]??'') : (val??'');
+      if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+      return v;
+    }
     const linked   = corrDataCache_[String(row.id)] || corrDataCache_[row.id] || [];
     const match    = linked.find(c => c._source_label === srcLabel);
     if (!match) return '';
@@ -193,6 +200,9 @@ function renderDataTable(rows) {
     let rj = {};
     try { rj = r.raw_json ? (typeof r.raw_json==='string' ? JSON.parse(r.raw_json) : r.raw_json) : {}; } catch(e) {}
     const rowCls    = r.relevance==='relevant' ? 'relevant-row' : r.relevance==='irrelevant' ? 'irrelevant-row' : '';
+    const srcBadge  = r._source
+      ? `<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:1px 5px;border-radius:3px;background:var(--bg3);color:var(--tx2);margin-right:4px;vertical-align:middle;">${esc(r._source)}</span>`
+      : '';
     const sev       = sevBadge(r.severity, r.id, !!r.ai_summary);
     const dataCells = fields.map(f => {
       const raw  = getFieldValue(r, f, rj);
@@ -206,7 +216,7 @@ function renderDataTable(rows) {
       <td class="col-select" onclick="event.stopPropagation()">
         <input type="checkbox" class="row-checkbox" ${selectedRows_.has(r.id)?'checked':''} onchange="toggleSelectRow(${r.id},this)">
       </td>
-      <td style="width:76px;">${sev}</td>${dataCells}
+      <td style="width:76px;">${sev}${srcBadge}</td>${dataCells}
       <td class="row-actions" onclick="event.stopPropagation()" style="width:110px;text-align:right;padding-right:8px;">
         <button class="btn btn-sm mark-relevant-btn"   style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);padding:2px 6px;font-size:10px;" onclick="markRow(${r.id},'relevant',this)">✓ Relevant</button>
         <button class="btn btn-sm mark-irrelevant-btn" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);padding:2px 6px;font-size:10px;margin-left:3px;" onclick="markRow(${r.id},'irrelevant',this)">✗ Irrel.</button>
@@ -310,6 +320,20 @@ async function loadCorrInline(rowId, el) {
 }
 
 // ── Data loading ──────────────────────────────────────────────────────────────
+
+/**
+ * When "All Sources" is active and the current view is a collection source,
+ * returns a comma-separated string of all job IDs in that collection.
+ * This enables true multi-source search (vs. correlation-based cross-source).
+ */
+function _collectionJobIds() {
+  if (!crossSourceMode_ || !selCollId) return null;
+  const coll = (collections_ || []).find(c => c.id === selCollId);
+  if (!coll?.sources?.length) return null;
+  const ids = coll.sources.map(s => s.job_id).filter(Boolean);
+  return ids.length > 1 ? ids.join(',') : null;
+}
+
 async function loadData(jobId, page) {
   const search  = document.getElementById('data-search')?.value.trim() || '';
   const fromRaw = document.getElementById('data-from')?.value || '';
@@ -317,7 +341,12 @@ async function loadData(jobId, page) {
   const params  = new URLSearchParams({page, per_page: perPage_});
   if (search)   params.set('search', search);
   if (regexMode_) params.set('regex', 'true');
-  if (crossSourceMode_ && (search || fieldFilters_.length)) params.set('cross_source', 'true');
+  const collIds = _collectionJobIds();
+  if (collIds) {
+    params.set('job_ids', collIds);          // multi-source: search all collection jobs
+  } else if (crossSourceMode_ && (search || fieldFilters_.length)) {
+    params.set('cross_source', 'true');      // correlation-based cross-source (standalone jobs)
+  }
   if (fromRaw)  params.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)    params.set('to_date',   toRaw.replace('T',' '));
   if (relFilter_) params.set('relevance', relFilter_);
@@ -328,8 +357,11 @@ async function loadData(jobId, page) {
   const d = await api.get(`/api/jobs/${jobId}/data?${params}`);
   const total = d.total || 0;
   const pages = Math.ceil(total / d.per_page) || 1;
-  document.getElementById('data-total').innerHTML =
-    `<b>${total.toLocaleString()}</b> records${crossSourceMode_ && (search || fieldFilters_.length) ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>' : ''}`;
+  const _csLabel = crossSourceMode_ && (search || fieldFilters_.length)
+    ? (collIds ? ' <span style="font-size:10px;color:var(--blue);font-weight:500;">⊕ all sources</span>'
+               : ' <span style="font-size:10px;color:var(--blue);font-weight:500;">🔗 incl. correlated</span>')
+    : '';
+  document.getElementById('data-total').innerHTML = `<b>${total.toLocaleString()}</b> records${_csLabel}`;
   document.getElementById('data-page-info').innerHTML = `Page <b>${d.page}</b> / <b>${pages}</b>`;
   _updateRowsChip(total, (jobs.find(j=>j.id===jobId)||{}).name || null);
   renderDataTable(d.rows);
@@ -367,7 +399,9 @@ async function loadHistogram(jobId) {
   const p = new URLSearchParams();
   if (search)                     p.set('search', search);
   if (regexMode_)                 p.set('regex', 'true');
-  if (crossSourceMode_ && (search || fieldFilters_.length)) p.set('cross_source', 'true');
+  const _hCollIds = _collectionJobIds();
+  if (_hCollIds)                  p.set('job_ids', _hCollIds);
+  else if (crossSourceMode_ && (search || fieldFilters_.length)) p.set('cross_source', 'true');
   if (fromRaw)                    p.set('from_date', fromRaw.replace('T',' '));
   if (toRaw)                      p.set('to_date',   toRaw.replace('T',' '));
   if (relFilter_)                 p.set('relevance', relFilter_);

@@ -14,16 +14,29 @@ def _build_log_filter(
     regex: bool = False,
     cross_source: bool = False,
     extra_conditions: list = None,   # e.g. ["timestamp IS NOT NULL"]
+    job_ids: list = None,            # multi-source: search across all listed job IDs
 ) -> tuple:
     """
     Build a WHERE clause + args tuple for log_events queries.
-    Always adds job_id=? as the first condition.
-    When cross_source=True and a search term is given, also matches rows whose
-    correlated partner records contain the search term.
+    Always adds job_id=? (or job_id IN (...)) as the first condition.
+
+    When job_ids is provided (multi-source mode), searches across all those jobs
+    and disables cross-source correlation (not needed — data is already merged).
+
+    When cross_source=True and a search/field-filter is given, also matches rows
+    whose correlated partner records satisfy the same condition.
+
     Returns (where_clause, args) — caller adds ORDER BY / LIMIT / OFFSET.
     """
-    conditions: list = ["job_id=?"]
-    args: tuple = (job_id,)
+    # Multi-source mode: override job_id filter with IN clause; disable correlation
+    if job_ids and len(job_ids) > 1:
+        placeholders = ','.join('?' * len(job_ids))
+        conditions: list = [f"job_id IN ({placeholders})"]
+        args: tuple = tuple(job_ids)
+        cross_source = False          # already seeing all sources — correlation N/A
+    else:
+        conditions: list = ["job_id=?"]
+        args: tuple = (job_id,)
 
     if extra_conditions:
         conditions.extend(extra_conditions)
