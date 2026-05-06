@@ -2,6 +2,8 @@
 let classifiers_ = [];
 let classifierFilter_ = null;   // classifier_id currently filtering the log table
 let classifyRunES_ = null;      // active SSE for classification job
+let clfScoresOn_  = false;      // whether the inline score column is visible
+let clfScoreCache_ = {};        // {log_id_str: [{classifier_id, name, confidence, matched}]}
 
 // ── Load + render classifiers ─────────────────────────────────────────────────
 async function loadClassifiers() {
@@ -9,6 +11,7 @@ async function loadClassifiers() {
   catch(e) { classifiers_ = []; }
   renderClassifierList();
   renderClassifierFilterPills();
+  _syncScoresBtn();
 }
 
 function renderClassifierList() {
@@ -45,12 +48,14 @@ function renderClassifierFilterPills() {
   if (row) row.style.display = 'flex';
   const pills = enabled.map(c => {
     const active = classifierFilter_ === c.id;
+    const label  = active ? `✓ ${esc(c.name)}` : esc(c.name);
     return `<button class="clf-pill ${active ? 'clf-pill-active' : ''}"
-      onclick="setClassifierFilter(${c.id})" title="${esc(c.description)}">${esc(c.name)}</button>`;
+      onclick="setClassifierFilter(${c.id})" title="${esc(c.description)}">${label}</button>`;
   }).join('');
+  const allActive = classifierFilter_ === null;
   el.innerHTML = `
-    <button class="clf-pill ${classifierFilter_ === null ? 'clf-pill-active' : ''}"
-      onclick="setClassifierFilter(null)">All</button>
+    <button class="clf-pill ${allActive ? 'clf-pill-active' : ''}"
+      onclick="setClassifierFilter(null)">${allActive ? '✓ All' : 'All'}</button>
     ${pills}`;
 }
 
@@ -250,9 +255,58 @@ async function loadLogClassifications(logId, containerEl) {
   }).join('');
 }
 
-// ── Patch loadData to include classifier_id param ─────────────────────────────
-const _origBuildDataParams = typeof _buildDataParams !== 'undefined' ? _buildDataParams : null;
+// ── Scores toggle ─────────────────────────────────────────────────────────────
+function toggleClfScores() {
+  clfScoresOn_ = !clfScoresOn_;
+  const btn = document.getElementById('btn-clf-scores');
+  if (btn) btn.classList.toggle('clf-score-btn-active', clfScoresOn_);
+  if (clfScoresOn_ && lastDataRows_ && lastDataRows_.length) {
+    _loadClfScoresBatch(lastDataRows_.map(r => r.id));
+  } else {
+    clfScoreCache_ = {};
+    if (lastDataRows_) renderDataTable(lastDataRows_);
+  }
+}
 
-function _getClassifierFilterParam() {
-  return classifierFilter_ ? `&classifier_id=${classifierFilter_}` : '';
+async function _loadClfScoresBatch(ids) {
+  if (!ids || !ids.length) return;
+  try {
+    const result = await api.post('/api/logs/classifications-batch', { ids });
+    clfScoreCache_ = result || {};
+  } catch(e) {
+    clfScoreCache_ = {};
+  }
+  if (lastDataRows_) renderDataTable(lastDataRows_);
+}
+
+// Called from loadData after rows are received (when toggle is on)
+function _maybeFetchClfScores(rows) {
+  if (!clfScoresOn_ || !rows || !rows.length) return;
+  clfScoreCache_ = {};
+  _loadClfScoresBatch(rows.map(r => r.id));
+}
+
+// Render the classifier score cell for a single row (called from renderDataTable)
+function _renderClfScoreCell(rowId) {
+  const scores = clfScoreCache_[rowId] || clfScoreCache_[String(rowId)] || [];
+  if (!scores.length) {
+    return `<td class="clf-score-cell"><span style="color:var(--tx2);font-size:10px;">–</span></td>`;
+  }
+  const bars = scores.map(s => {
+    const pct   = Math.round((s.confidence || 0) * 100);
+    const color = s.matched ? 'var(--green)' : 'var(--tx2)';
+    return `<div class="clf-score-mini" title="${esc(s.name)}: ${pct}%">
+      <span class="clf-score-mini-name">${esc(s.name)}</span>
+      <div class="clf-score-mini-bar">
+        <div style="width:${pct}%;background:${color};height:100%;border-radius:2px;transition:width .3s;"></div>
+      </div>
+      <span class="clf-score-mini-pct" style="color:${color};">${pct}%</span>
+    </div>`;
+  }).join('');
+  return `<td class="clf-score-cell">${bars}</td>`;
+}
+
+// Show/hide the Scores button depending on whether classifiers exist
+function _syncScoresBtn() {
+  // Button lives inside classifier-filter-row which shows/hides with the pills — no extra logic needed
 }

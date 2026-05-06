@@ -177,6 +177,9 @@ function renderDataTable(rows) {
   };
   const _thStyle = f => f===sortField_ ? 'cursor:pointer;white-space:nowrap;background:rgba(88,166,255,.08);' : 'cursor:pointer;white-space:nowrap;';
 
+  const _clfScores = typeof clfScoresOn_ !== 'undefined' && clfScoresOn_;
+  const _colCount  = fields.length + 3 + (_clfScores ? 1 : 0);
+
   document.getElementById('data-thead').innerHTML =
     `<tr><th class="col-select"><input type="checkbox" class="row-checkbox" id="select-all-cb" ${allChecked?'checked':''} onchange="selectAll(this.checked)" title="Select all"></th>` +
     '<th style="width:76px;min-width:76px;">Severity</th>' +
@@ -188,11 +191,12 @@ function renderDataTable(rows) {
       }
       return `<th data-v="${fEsc}" style="${_thStyle(f)}" onclick="sortBy(this.dataset.v)">${esc(f)}${_sortArrow(f)}</th>`;
     }).join('') +
+    (_clfScores ? '<th style="min-width:160px;white-space:nowrap;">📊 Classifiers</th>' : '') +
     '<th style="width:110px;min-width:110px;text-align:right;">Actions</th></tr>';
 
   const tbody = document.getElementById('data-tbody');
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="${fields.length+3}" style="color:var(--tx2);padding:20px 14px;text-align:center;">No data — run the job first or adjust filters.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${_colCount}" style="color:var(--tx2);padding:20px 14px;text-align:center;">No data — run the job first or adjust filters.</td></tr>`;
     return;
   }
 
@@ -212,18 +216,20 @@ function renderDataTable(rows) {
       else if (f==='http_status_code'||f==='status') { const c=httpColor(disp); if(c) attr=` style="${c};font-weight:600;"`; }
       return `<td${attr} title="${esc(disp)}">${esc(disp.length>90 ? disp.slice(0,90)+'…' : disp)}</td>`;
     }).join('');
+    const clfCell = _clfScores && typeof _renderClfScoreCell === 'function'
+      ? _renderClfScoreCell(r.id) : '';
     return `<tr class="${rowCls}" onclick="expandRow(this,${r.id})">
       <td class="col-select" onclick="event.stopPropagation()">
         <input type="checkbox" class="row-checkbox" ${selectedRows_.has(r.id)?'checked':''} onchange="toggleSelectRow(${r.id},this)">
       </td>
-      <td style="width:76px;">${sev}${srcBadge}</td>${dataCells}
+      <td style="width:76px;">${sev}${srcBadge}</td>${dataCells}${clfCell}
       <td class="row-actions" onclick="event.stopPropagation()" style="width:110px;text-align:right;padding-right:8px;">
         <button class="btn btn-sm mark-relevant-btn"   style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);padding:2px 6px;font-size:10px;" onclick="markRow(${r.id},'relevant',this)">✓ Relevant</button>
         <button class="btn btn-sm mark-irrelevant-btn" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);padding:2px 6px;font-size:10px;margin-left:3px;" onclick="markRow(${r.id},'irrelevant',this)">✗ Irrel.</button>
       </td>
     </tr>
     <tr id="expand-${r.id}" style="display:none;">
-      <td colspan="${fields.length+3}" style="background:var(--bg0);padding:0;border-bottom:1px solid var(--border);">
+      <td colspan="${_colCount}" style="background:var(--bg0);padding:0;border-bottom:1px solid var(--border);">
         ${buildKibanaDocView(r, rj)}
       </td>
     </tr>`;
@@ -385,6 +391,8 @@ async function loadData(jobId, page) {
       renderDataTable(d.rows);
     } catch(e) {}
   }
+  // Fetch classifier scores for new page when toggle is on
+  if (typeof _maybeFetchClfScores === 'function') _maybeFetchClfScores(d.rows);
 }
 
 function applyDataFilter() { dataPage_=1; loadData(selJobId, 1); }

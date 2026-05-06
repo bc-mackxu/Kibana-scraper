@@ -160,6 +160,36 @@ def get_log_classifications(log_id: int):
     ) or []
 
 
+@router.post("/api/logs/classifications-batch")
+def get_classifications_batch(payload: dict):
+    """Return classifier scores for multiple log IDs in one call.
+    Returns {log_id: [{classifier_id, name, confidence, matched}]}
+    """
+    ids = payload.get("ids", [])
+    if not ids:
+        return {}
+    fmt = ",".join(["?"] * len(ids))
+    rows = qall(
+        f"SELECT lcr.log_id, lcr.classifier_id, lcr.matched, lcr.confidence, c.name "
+        f"FROM log_classification_results lcr "
+        f"JOIN classifiers c ON c.id = lcr.classifier_id "
+        f"WHERE lcr.log_id IN ({fmt}) ORDER BY lcr.log_id, lcr.confidence DESC",
+        tuple(ids),
+    ) or []
+    result: dict = {}
+    for row in rows:
+        lid = str(row["log_id"])
+        if lid not in result:
+            result[lid] = []
+        result[lid].append({
+            "classifier_id": row["classifier_id"],
+            "name":          row["name"],
+            "confidence":    row["confidence"],
+            "matched":       bool(row["matched"]),
+        })
+    return result
+
+
 # ─── Routes: classification run (SSE stream) ─────────────────────────────────
 
 @router.get("/api/classifiers/run/stream")
