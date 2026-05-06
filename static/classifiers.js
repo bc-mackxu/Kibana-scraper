@@ -49,12 +49,12 @@ function renderClassifierFilterPills() {
   const pills = enabled.map(c => {
     const active = classifierFilter_ === c.id;
     const label  = active ? `✓ ${esc(c.name)}` : esc(c.name);
-    return `<button class="clf-pill ${active ? 'clf-pill-active' : ''}"
+    return `<button class="rel-pill ${active ? 'active' : ''}"
       onclick="setClassifierFilter(${c.id})" title="${esc(c.description)}">${label}</button>`;
   }).join('');
   const allActive = classifierFilter_ === null;
   el.innerHTML = `
-    <button class="clf-pill ${allActive ? 'clf-pill-active' : ''}"
+    <button class="rel-pill ${allActive ? 'active' : ''}"
       onclick="setClassifierFilter(null)">${allActive ? '✓ All' : 'All'}</button>
     ${pills}`;
 }
@@ -310,3 +310,7 @@ function _renderClfScoreCell(rowId) {
 function _syncScoresBtn() {
   // Button lives inside classifier-filter-row which shows/hides with the pills — no extra logic needed
 }
+
+// Load classifiers immediately so filter pills are visible as soon as the page loads
+// (classifiers.js is the last script — init() runs before this file is parsed, so we boot here)
+loadClassifiers();
