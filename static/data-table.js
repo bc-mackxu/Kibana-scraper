@@ -634,51 +634,167 @@ function renderKfValue(raw) {
   return `<span style="white-space:pre-wrap;word-break:break-all;">${esc(raw)}</span>`;
 }
 
+// ── Key fields shown at top of detail view ────────────────────────────────────
+const KF_PINNED = ['message','error_level','http_status_code','status','request_uri',
+  'request_method','request_id','store_hash','store_id','remote_addr',
+  'syslog_program','type','server_name','domain'];
+
+function _docFieldRow(field, value, opts = {}) {
+  const {isMeta=false, isPinned=false, highlight=false} = opts;
+  const strVal  = String(value ?? '');
+  const safeV   = esc(strVal);
+  const safeF   = esc(field);
+  const valueCell = renderKfValue(strVal);
+  const filterBtns = isMeta ? '' : `
+    <button class="kf-btn kf-plus"  title="Filter: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterInField(this.dataset.f,this.dataset.v)">+</button>
+    <button class="kf-btn kf-minus" title="Exclude: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterOutField(this.dataset.f,this.dataset.v)">−</button>`;
+  const copyBtn = `<button class="kf-btn kf-copy" title="Copy value" onclick="navigator.clipboard.writeText(this.dataset.v)" data-v="${safeV}">⧉</button>`;
+  const hlStyle = highlight ? 'background:rgba(255,166,87,.06);' : '';
+  const pinnedStyle = isPinned ? 'background:rgba(88,166,255,.04);' : '';
+  return `<tr class="kibana-field-row" style="${hlStyle}${pinnedStyle}">
+    <td class="kf-actions">${filterBtns}${copyBtn}</td>
+    <td class="kf-name ${isMeta?'kf-meta':''} ${isPinned?'kf-pinned':''}">${esc(field)}</td>
+    <td class="kf-value">${valueCell}</td>
+  </tr>`;
+}
+
+function _docGroupTable(entries, opts = {}) {
+  const rowsHtml = entries.map(([k, v]) => _docFieldRow(k, v, opts)).join('');
+  return `<table class="kibana-doc-table">
+    <colgroup><col style="width:68px"><col style="width:200px"><col></colgroup>
+    <tbody>${rowsHtml}</tbody></table>`;
+}
+
 function buildKibanaDocView(row, rj) {
-  const allFields = {};
-  allFields['@timestamp'] = row.timestamp || '';
-  allFields['_relevance'] = row.relevance  || '';
-  allFields['_severity']  = row.severity   || '';
-  if (row.ai_summary) allFields['_ai_summary'] = row.ai_summary;
+  // ── Collect all data fields, skipping @timestamp (shown in header) ──────────
+  const dataFields = {};
   Object.entries(rj).forEach(([k, v]) => {
-    if (k !== '@timestamp') {
-      let val = Array.isArray(v) ? (v[0]??'') : v;
-      if (val !== null && typeof val === 'object') val = JSON.stringify(val);
-      allFields[k] = String(val??'');
+    if (k === '@timestamp') return;
+    let val = Array.isArray(v) ? (v[0]??'') : v;
+    if (val !== null && typeof val === 'object') val = JSON.stringify(val);
+    dataFields[k] = String(val ?? '');
+  });
+
+  // ── Severity / relevance / source badges for header ──────────────────────
+  const sevColor = {critical:'var(--red)',high:'var(--red)',error:'var(--red)',
+    warn:'var(--orange)',warning:'var(--orange)',info:'var(--blue)',debug:'var(--tx2)'};
+  const relColor = {relevant:'var(--green)',irrelevant:'var(--red)'};
+  const sev = row.severity
+    ? `<span style="font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:3px;background:${sevColor[row.severity]||'var(--bg3)'};color:#fff;text-transform:uppercase;">${esc(row.severity)}</span>` : '';
+  const rel = row.relevance
+    ? `<span style="font-size:10px;padding:2px 7px;border-radius:3px;border:1px solid ${relColor[row.relevance]||'var(--border)'};color:${relColor[row.relevance]||'var(--tx2)'};">${esc(row.relevance)}</span>` : '';
+  const srcBadge = row._source
+    ? `<span style="font-size:10px;padding:2px 7px;border-radius:3px;background:var(--bg3);color:var(--tx2);font-weight:600;letter-spacing:.04em;">${esc(row._source)}</span>` : '';
+  const aiSummary = row.ai_summary
+    ? `<div style="padding:6px 14px 4px;font-size:11px;color:var(--tx1);background:rgba(88,166,255,.05);border-bottom:1px solid var(--border-subtle);font-style:italic;">🤖 ${esc(row.ai_summary)}</div>` : '';
+
+  // ── Pinned key fields ─────────────────────────────────────────────────────
+  const pinnedEntries = KF_PINNED
+    .filter(k => k in dataFields && dataFields[k] !== '')
+    .map(k => [k, dataFields[k]]);
+
+  // ── Remaining fields grouped by dot-namespace ─────────────────────────────
+  const shown = new Set(KF_PINNED);
+  const groups = {};   // namespace → [[k, v], ...]
+  const ungrouped = [];
+  Object.entries(dataFields).forEach(([k, v]) => {
+    if (shown.has(k)) return;
+    const dot = k.indexOf('.');
+    if (dot > 0) {
+      const ns = k.slice(0, dot);
+      (groups[ns] = groups[ns] || []).push([k, v]);
+    } else {
+      ungrouped.push([k, v]);
     }
   });
-  const rows = Object.entries(allFields).map(([field, value]) => {
-    const isMeta   = field.startsWith('_');
-    const safeV    = esc(String(value));
-    const safeF    = esc(field);
-    const valueCell = renderKfValue(String(value));
-    const filterBtns = isMeta ? '' : `
-      <button class="kf-btn kf-plus"  title="Filter: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterInField(this.dataset.f, this.dataset.v)">+</button>
-      <button class="kf-btn kf-minus" title="Exclude: ${safeF} = ${safeV.slice(0,40)}" data-f="${safeF}" data-v="${safeV}" onclick="filterOutField(this.dataset.f, this.dataset.v)">−</button>`;
-    return `<tr class="kibana-field-row">
-      <td class="kf-actions">${filterBtns}</td>
-      <td class="kf-name ${isMeta?'kf-meta':''}">${esc(field)}</td>
-      <td class="kf-value">${valueCell}</td>
-    </tr>`;
+
+  // ── Hide empty fields by default ─────────────────────────────────────────
+  const filterEmpty = entries => entries.filter(([,v]) => v !== '');
+  const pinnedVisible = filterEmpty(pinnedEntries);
+  const ungroupedVisible = filterEmpty(ungrouped);
+  const emptyPinned = pinnedEntries.filter(([,v]) => v === '');
+  const emptyUngrouped = ungrouped.filter(([,v]) => v === '');
+  const emptyCount = emptyPinned.length + emptyUngrouped.length
+    + Object.values(groups).reduce((n, e) => n + e.filter(([,v]) => v === '').length, 0);
+
+  // ── Render pinned section ─────────────────────────────────────────────────
+  const pinnedHtml = pinnedVisible.length
+    ? `<div class="doc-section">
+        <div class="doc-section-hdr pinned-hdr">⭐ Key Fields</div>
+        ${_docGroupTable(pinnedVisible, {isPinned: true})}
+      </div>` : '';
+
+  // ── Render namespace groups ───────────────────────────────────────────────
+  const groupsHtml = Object.entries(groups).map(([ns, entries]) => {
+    const visible = filterEmpty(entries);
+    const empty   = entries.filter(([,v]) => v === '');
+    if (!visible.length && !empty.length) return '';
+    const uid = `docgrp-${row.id}-${ns}`;
+    const count = visible.length + (empty.length ? `+${empty.length}✕` : '');
+    return `<div class="doc-section">
+      <div class="doc-section-hdr collapsible" onclick="docToggleSection('${uid}')">
+        <span class="doc-section-arrow" id="${uid}-arrow">▸</span>
+        ${esc(ns)}
+        <span class="doc-section-count">${visible.length} field${visible.length!==1?'s':''}</span>
+      </div>
+      <div class="doc-section-body" id="${uid}" style="display:none;">
+        ${_docGroupTable(visible)}
+        ${empty.length ? `<div class="doc-empty-hint">${empty.length} empty field${empty.length>1?'s':''} hidden</div>` : ''}
+      </div>
+    </div>`;
   }).join('');
+
+  // ── Ungrouped fields ──────────────────────────────────────────────────────
+  const ungroupedHtml = ungroupedVisible.length
+    ? `<div class="doc-section">
+        <div class="doc-section-hdr collapsible" onclick="docToggleSection('docgrp-${row.id}-other')">
+          <span class="doc-section-arrow" id="docgrp-${row.id}-other-arrow">▾</span>
+          Other Fields
+          <span class="doc-section-count">${ungroupedVisible.length} field${ungroupedVisible.length!==1?'s':''}</span>
+        </div>
+        <div class="doc-section-body" id="docgrp-${row.id}-other">
+          ${_docGroupTable(ungroupedVisible)}
+          ${emptyUngrouped.length ? `<div class="doc-empty-hint">${emptyUngrouped.length} empty field${emptyUngrouped.length>1?'s':''} hidden</div>` : ''}
+        </div>
+      </div>` : '';
+
+  const emptyNote = emptyCount > 0
+    ? `<div class="doc-empty-hint" style="padding:4px 14px;">${emptyCount} empty field${emptyCount>1?'s':''} hidden across all sections</div>` : '';
+
   return `<div class="kibana-doc-wrap">
     <div class="kibana-doc-header">
-      <span style="font-size:11px;font-weight:600;color:var(--tx1);">Document #${row.id}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:11px;font-weight:600;color:var(--tx2);">Doc&nbsp;#${row.id}</span>
+        <span style="font-size:11px;color:var(--tx2);font-family:monospace;">${esc(row.timestamp||'')}</span>
+        ${sev}${rel}${srcBadge}
+      </div>
       <div style="display:flex;gap:6px;">
-        <button class="btn btn-sm" style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);font-size:10px;" onclick="markRow(${row.id},'relevant',this)">✓ Mark Relevant</button>
-        <button class="btn btn-sm" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);font-size:10px;" onclick="markRow(${row.id},'irrelevant',this)">✗ Mark Irrelevant</button>
+        <button class="btn btn-sm" style="background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);font-size:10px;" onclick="markRow(${row.id},'relevant',this)">✓ Relevant</button>
+        <button class="btn btn-sm" style="background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.3);font-size:10px;" onclick="markRow(${row.id},'irrelevant',this)">✗ Irrelevant</button>
       </div>
     </div>
-    <table class="kibana-doc-table">
-      <colgroup><col style="width:56px"><col style="width:180px"><col></colgroup>
-      <tbody>${rows}</tbody>
-    </table>
+    ${aiSummary}
+    <div class="doc-sections">
+      ${pinnedHtml}
+      ${ungroupedHtml}
+      ${groupsHtml}
+      ${emptyNote}
+    </div>
     <div id="corr-inline-${row.id}"></div>
     <div id="clf-results-${row.id}" class="clf-results-section" style="display:none;">
       <div class="clf-results-hdr">🏷 Classifier Scores</div>
       <div class="clf-results-body" id="clf-results-body-${row.id}">Loading…</div>
     </div>
   </div>`;
+}
+
+function docToggleSection(uid) {
+  const body  = document.getElementById(uid);
+  const arrow = document.getElementById(uid + '-arrow');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  if (arrow) arrow.textContent = open ? '▸' : '▾';
 }
 
 // ── Field filter chips ────────────────────────────────────────────────────────
